@@ -20,17 +20,44 @@ const COUNTRY = navigator.language.split('-')[1]?.toUpperCase() || 'US';
 let lastResolveId = 0; 
 let currentData = null; // Stores currently resolved track for sharing
 
+const SMAP = { s: 'spotify', a: 'appleMusic', y: 'youtubeMusic', z: 'amazonMusic', t: 'tidal', d: 'deezer', p: 'pandora' };
+const SREV = { spotify: 's', appleMusic: 'a', youtubeMusic: 'y', amazonMusic: 'z', tidal: 't', deezer: 'd', pandora: 'p' };
+
 /**
- * Universal Sharing Helpers.
- * Encodes track metadata and links into a compact Base64 string for instant cross-user sharing.
+ * Micro-Encoding Logic.
+ * Extracts unique platform IDs (e.g. Spotify track ID) and maps keys to single characters
+ * to keep the generated share URL as short and portable as possible.
  */
 function encodeShare(d) {
-  return btoa(unescape(encodeURIComponent(JSON.stringify([d.t, d.a, d.v, d.p, d.l]))));
+  const shortLinks = {};
+  for (const pid in d.l) {
+    const key = SREV[pid] || pid;
+    let val = d.l[pid];
+    if (pid === 'spotify') val = val.match(/track\/([a-zA-Z0-9]+)/)?.[1] || val;
+    else if (pid === 'appleMusic') val = val.match(/[?&]i=(\d+)/)?.[1] || val;
+    else if (pid === 'youtubeMusic') val = val.match(/[?&]v=([a-zA-Z0-9_-]+)/)?.[1] || val;
+    shortLinks[key] = val;
+  }
+  // Store as positional array to avoid property name overhead
+  return btoa(unescape(encodeURIComponent(JSON.stringify([d.t, d.a, d.v, d.p, shortLinks]))));
 }
+
 function decodeShare(s) {
   try {
     const a = JSON.parse(decodeURIComponent(escape(atob(s))));
-    return { t: a[0], a: a[1], v: a[2], p: a[3], l: a[4] };
+    const links = {};
+    const shortLinks = a[4] || {};
+    for (const key in shortLinks) {
+      const pid = SMAP[key] || key;
+      let val = shortLinks[key];
+      if (!val.startsWith('http')) {
+        if (pid === 'spotify') val = `https://open.spotify.com/track/${val}`;
+        else if (pid === 'appleMusic') val = `https://music.apple.com/song/${val}`;
+        else if (pid === 'youtubeMusic') val = `https://music.youtube.com/watch?v=${val}`;
+      }
+      links[pid] = val;
+    }
+    return { t: a[0], a: a[1], v: a[2], p: a[3], l: links };
   } catch (e) { return null; }
 }
 /** 
