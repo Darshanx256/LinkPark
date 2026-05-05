@@ -234,16 +234,25 @@ function pick(i) {
 /** Handles mobile 'Go' / 'Enter' form submission. */
 document.getElementById('searchForm')?.addEventListener('submit', e => {
   e.preventDefault();
+  const v = qEl.value.trim();
+  if (!v) return;
+
+  // 1. If an item is explicitly highlighted in the dropdown, pick it.
   if (ddEl.style.display === 'block' && idx >= 0) {
     pick(idx);
-  } else {
-    const v = qEl.value.trim();
-    if (v) {
-      clearTimeout(timer);
-      closeDD();
-      resolve(v);
-    }
+    return;
   }
+
+  // 2. If the input is a URL or Spotify URI, resolve it immediately.
+  const isUrl = /^(https?:\/\/|spotify:track:)/i.test(v) || (!/\s/.test(v) && v.includes('.'));
+  if (isUrl) {
+    clearTimeout(timer);
+    closeDD();
+    resolve(v);
+  }
+  
+  // 3. Intentional: If it's just text and no selection was made, we wait for the user 
+  // to pick a recommendation to ensure high-quality metadata.
 });
 
 /**
