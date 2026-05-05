@@ -18,7 +18,21 @@ const COUNTRY = navigator.language.split('-')[1]?.toUpperCase() || 'US';
  * Used to discard results from stale network requests when a new search begins.
  */
 let lastResolveId = 0; 
+let currentData = null; // Stores currently resolved track for sharing
 
+/**
+ * Universal Sharing Helpers.
+ * Encodes track metadata and links into a compact Base64 string for instant cross-user sharing.
+ */
+function encodeShare(d) {
+  return btoa(unescape(encodeURIComponent(JSON.stringify([d.t, d.a, d.v, d.p, d.l]))));
+}
+function decodeShare(s) {
+  try {
+    const a = JSON.parse(decodeURIComponent(escape(atob(s))));
+    return { t: a[0], a: a[1], v: a[2], p: a[3], l: a[4] };
+  } catch (e) { return null; }
+}
 /** 
  * Platform definitions for UI rendering and link mapping.
  * Ordered by display priority. 
@@ -98,6 +112,39 @@ document.getElementById('seekWrap').addEventListener('click', (e) => {
   audio.currentTime = p * audio.duration;
 });
 
+document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => {
+  if (!currentData) return;
+  const btn = e.currentTarget;
+  const url = new URL(window.location.href);
+  url.searchParams.set('s', encodeShare(currentData));
+  try {
+    await navigator.clipboard.writeText(url.toString());
+    const oldHtml = btn.innerHTML;
+    btn.classList.add('copied');
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied`;
+    setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = oldHtml; }, 2000);
+  } catch (err) { }
+});
+
+/**
+ * Instantly renders a shared card from URL parameters.
+ * Bypasses all API calls to provide immediate visual feedback to recipients.
+ */
+window.addEventListener('load', () => {
+  const s = new URLSearchParams(window.location.search).get('s');
+  if (s) {
+    const data = decodeShare(s);
+    if (data) {
+      setLoad(true);
+      setTimeout(() => {
+        populateUI(data.t, data.a, data.v, data.p, data.l);
+        setLoad(false);
+        cardEl.style.display = 'block';
+      }, 50);
+    }
+  }
+});
+
 /**
  * Formats seconds into a human-readable MM:SS string.
  * @param {number} s - Time in seconds.
@@ -140,7 +187,7 @@ qEl.addEventListener('input', () => {
    * Identifies if input is a streaming URL or Spotify URI.
    * If detected, bypasses suggestion logic and attempts direct resolution.
    */
-  if (!/\s/.test(v) && /^(https?:\/\/)?([\w.-]+\.[a-z]{2,}\/.*|spotify:track:.*)/i.test(v)) {
+  if (!/\s/.test(v) && /^(https?:\/\/|spotify:track:)/i.test(v)) {
     let url = v;
     if (!/^https?:\/\//i.test(url) && !url.startsWith('spotify:')) {
       url = 'https://' + url;
@@ -237,22 +284,17 @@ document.getElementById('searchForm')?.addEventListener('submit', e => {
   const v = qEl.value.trim();
   if (!v) return;
 
-  // 1. If an item is explicitly highlighted in the dropdown, pick it.
   if (ddEl.style.display === 'block' && idx >= 0) {
     pick(idx);
     return;
   }
 
-  // 2. If the input is a URL or Spotify URI, resolve it immediately.
   const isUrl = /^(https?:\/\/|spotify:track:)/i.test(v) || (!/\s/.test(v) && v.includes('.'));
   if (isUrl) {
     clearTimeout(timer);
     closeDD();
     resolve(v);
   }
-  
-  // 3. Intentional: If it's just text and no selection was made, we wait for the user 
-  // to pick a recommendation to ensure high-quality metadata.
 });
 
 /**
@@ -268,12 +310,6 @@ async function resolve(data) {
   try {
     let od, tf = {}, item = data;
 
-    /**
-     * Resolves the primary iTunes ID from Odesli entities.
-     * Required to fetch high-res artwork and audio previews.
-     * @param {object} o - Odesli data object.
-     * @returns {string|null}
-     */
     const getItunesId = (o) => {
       const am = o?.linksByPlatform?.appleMusic;
       if (am?.entityUniqueId) {
@@ -283,11 +319,6 @@ async function resolve(data) {
       return am?.url?.match(/[?&]i=(\d+)/)?.[1];
     };
 
-    /**
-     * Fetches enriched metadata and previews from iTunes.
-     * Prevents redundant calls if a preview is already present.
-     * @param {string} id - iTunes track identifier.
-     */
     const pullItunes = async (id) => {
       if (!id || item.previewUrl || myId !== lastResolveId) return;
       try {
@@ -301,10 +332,6 @@ async function resolve(data) {
       } catch (e) { }
     };
 
-    /** 
-     * Scrubs parentheticals and "noisy" suffixes from titles.
-     * Essential for improving match rates on the notoriously strict iTunes Search API.
-     */
     const cleanQ = (s) => s.replace(/\(.*\)|\[.*\]|- Single|- EP|Official.*|Audio/gi, '').trim();
 
     if (typeof data === 'string') {
@@ -326,10 +353,6 @@ async function resolve(data) {
       await Promise.allSettled(tasks);
       if (myId !== lastResolveId) return;
 
-      /**
-       * Deep Upgrade: If initial results are sparse, re-query via canonical Spotify link.
-       * Odesli's index is significantly more robust when queried with platform-specific IDs.
-       */
       let oLinks = od?.linksByPlatform || {};
       const canon = tf.spotify;
       if (canon && canon !== data && (!oLinks.spotify || Object.keys(oLinks).length < 3)) {
@@ -341,10 +364,6 @@ async function resolve(data) {
         }
       }
 
-      /**
-       * Keyword Fail-safe: Attempts to find the track on iTunes if ID-based lookup failed.
-       * Recalculates clean metadata from Odesli upgrade to maximize search accuracy.
-       */
       const m = () => {
         const e = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
         return {
@@ -394,22 +413,6 @@ async function resolve(data) {
     const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
     const finalTitle = (ent.title && ent.title !== 'Unknown') ? ent.title : item.title;
     const finalArtist = (ent.artistName && ent.artistName !== 'Unknown') ? ent.artistName : item.artist;
-    
-    document.getElementById('art').src = item.art || ent.thumbnailUrl || '';
-    document.getElementById('ctitle').textContent = finalTitle;
-    document.getElementById('cartist').textContent = finalArtist;
-
-    const pWrap = document.getElementById('playerWrap');
-    if (item.previewUrl) {
-      pWrap.style.display = 'flex';
-      audio.src = item.previewUrl;
-      audio.load();
-      document.getElementById('seekFill').style.width = '0%';
-      document.getElementById('timeLabel').textContent = '0:00';
-    } else {
-      pWrap.style.display = 'none';
-      audio.pause();
-    }
 
     const links = {};
     P.forEach(p => {
@@ -429,26 +432,12 @@ async function resolve(data) {
       else if (typeof data === 'string' && data.includes('music.apple.com')) links.appleMusic = data;
     }
 
-    let found = 0;
-    P.forEach(p => {
-      let href = links[p.id]; if (!href) return;
-
-      try {
-        const u = new URL(href);
-        if (p.id === 'appleMusic') {
-          if (u.hostname === 'geo.music.apple.com') u.hostname = 'music.apple.com';
-          for (const k of Array.from(u.searchParams.keys())) if (k !== 'i') u.searchParams.delete(k);
-        } else if (p.id === 'spotify') {
-          u.searchParams.delete('si'); u.searchParams.delete('context');
-        }
-        href = u.toString();
-      } catch (e) { }
-
-      found++;
-      linksEl.appendChild(makeRow(p, href));
-    });
-
-    if (!found) throw new Error('NoStreamingLinks');
+    /**
+     * Final UI population and internal state update.
+     * Prepares the data for universal sharing.
+     */
+    currentData = { t: finalTitle, a: finalArtist, v: item.art, p: item.previewUrl, l: links };
+    populateUI(finalTitle, finalArtist, item.art, item.previewUrl, links);
     cardEl.style.display = 'block';
 
   } catch (e) {
@@ -461,6 +450,44 @@ async function resolve(data) {
   } finally {
     setLoad(false);
   }
+}
+
+/**
+ * Populates the card UI with provided metadata and streaming links.
+ * Shared between the main resolution pipeline and the instant-load share decoder.
+ */
+function populateUI(title, artist, art, preview, links) {
+  document.getElementById('art').src = art || '';
+  document.getElementById('ctitle').textContent = title;
+  document.getElementById('cartist').textContent = artist;
+
+  const pWrap = document.getElementById('playerWrap');
+  if (preview) {
+    pWrap.style.display = 'flex';
+    audio.src = preview;
+    audio.load();
+    document.getElementById('seekFill').style.width = '0%';
+    document.getElementById('timeLabel').textContent = '0:00';
+  } else {
+    pWrap.style.display = 'none';
+    audio.pause();
+  }
+
+  linksEl.innerHTML = '';
+  P.forEach(p => {
+    let href = links[p.id]; if (!href) return;
+    try {
+      const u = new URL(href);
+      if (p.id === 'appleMusic') {
+        if (u.hostname === 'geo.music.apple.com') u.hostname = 'music.apple.com';
+        for (const k of Array.from(u.searchParams.keys())) if (k !== 'i') u.searchParams.delete(k);
+      } else if (p.id === 'spotify') {
+        u.searchParams.delete('si'); u.searchParams.delete('context');
+      }
+      href = u.toString();
+    } catch (e) { }
+    linksEl.appendChild(makeRow(p, href));
+  });
 }
 
 /**
