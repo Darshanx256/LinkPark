@@ -110,7 +110,7 @@ app.get('/api/odesli', async (req, res) => {
     
     /**
      * Array of fetch strategies to bypass potential Odesli IP blocks.
-     * Strategies include direct fetch and multiple public CORS wrappers.
+     * Includes direct fetch and multiple public CORS wrappers.
      */
     const strategies = [
         async () => await fetch(target),
@@ -124,16 +124,19 @@ app.get('/api/odesli', async (req, res) => {
         async () => await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`)
     ];
 
-    for (let i = 0; i < strategies.length; i++) {
+    // Randomize strategies to distribute load across proxies
+    const shuffled = strategies.sort(() => Math.random() - 0.5);
+
+    for (let i = 0; i < shuffled.length; i++) {
         try {
-            const response = await strategies[i]();
+            const response = await shuffled[i]();
             if (response.ok) {
                 const data = await response.json();
                 return res.json(data);
             }
-            console.warn(`Odesli strategy ${i} (Attempt ${i + 1}/${strategies.length}) failed: ${response.status}`);
+            console.warn(`Odesli strategy attempt ${i + 1} failed: ${response.status}`);
         } catch (error) {
-            console.warn(`Odesli strategy ${i} error:`, error.message);
+            console.warn(`Odesli strategy attempt ${i + 1} error:`, error.message);
         }
     }
 
