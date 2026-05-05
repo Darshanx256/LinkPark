@@ -441,11 +441,20 @@ async function resolve(data) {
  * @param {string} url - Target streaming URL.
  */
 async function fetchOdesli(url) {
-  if (ODESLI_PROXY) {
-    const r = await fetch(`${ODESLI_PROXY}?url=${enc(url)}&userCountry=${COUNTRY}`);
-    if (!r.ok) throw new Error(`odesli proxy ${r.status}`);
-    return r.json();
+  try {
+    if (ODESLI_PROXY) {
+      const r = await fetch(`${ODESLI_PROXY}?url=${enc(url)}&userCountry=${COUNTRY}`);
+      if (r.ok) return await r.json();
+      console.warn(`Odesli proxy failed (${r.status}), falling back to direct client fetch.`);
+    }
+  } catch (e) {
+    console.warn('Odesli proxy error, falling back to direct client fetch.', e);
   }
+
+  /** 
+   * Fallback: Queries Odesli via corsproxy.io. 
+   * Used as a fail-safe if the Node.js proxy IP is rate-limited or blocked by Odesli.
+   */
   const target = `${ODESLI}?url=${enc(url)}&userCountry=${COUNTRY}`;
   const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(target)}`);
   if (!r.ok) throw new Error(`odesli ${r.status}`);
