@@ -15,14 +15,6 @@ app.use(cors({
     origin: ALLOWED_ORIGIN || '*'
 }));
 
-// Serve the static frontend if hosting standalone
-app.use(express.static(__dirname));
-
-// Silence config.js 404 noise in standalone mode (key comes from proxy, not config)
-app.get('/config.js', (req, res) => {
-    res.type('application/javascript').send('// Standalone mode: key handled by proxy');
-});
-
 // Odesli Proxy Route
 app.get('/api/odesli', async (req, res) => {
     const { url, userCountry } = req.query;
@@ -56,10 +48,24 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-// Fallback to index.html for standalone hosting
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
+if (ALLOWED_ORIGIN) {
+    // Hybrid mode: SERVICE is set, so we're a proxy only
+    // Don't serve any static files — the frontend lives elsewhere
+    console.log(`Proxy-only mode. Accepting requests from: ${ALLOWED_ORIGIN}`);
+} else {
+    // Standalone mode: serve the full frontend too
+    app.use(express.static(__dirname));
+
+    // Silence config.js 404 noise (key comes from proxy, not config)
+    app.get('/config.js', (req, res) => {
+        res.type('application/javascript').send('// Standalone mode: key handled by proxy');
+    });
+
+    // Fallback to index.html for standalone hosting
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(__dirname, 'index.html'));
+    });
+}
 
 app.listen(PORT, () => {
     console.log(`LinkPark is live on port ${PORT}`);
