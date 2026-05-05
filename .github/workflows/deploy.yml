@@ -33,7 +33,8 @@ jobs:
             exit 1
           fi
           # Replaces the placeholder in the code with the actual secret
-          sed -i "s/YOUR_TINYFISH_API_KEY_HERE/$TFKEY/g" index.html
+          # Using | as delimiter in case the key contains /
+          sed -i "s|YOUR_TINYFISH_API_KEY_HERE|$TFKEY|g" index.html
           
       - name: Setup Pages
         uses: actions/configure-pages@v5
