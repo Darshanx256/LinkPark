@@ -119,9 +119,9 @@ app.get('/api/odesli', async (req, res) => {
             const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(target)}`);
             if (!r.ok) return r;
             const j = await r.json();
-            // AllOrigins returns the target response as a string inside a 'contents' field.
             return { ok: true, json: () => JSON.parse(j.contents) };
-        }
+        },
+        async () => await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`)
     ];
 
     for (let i = 0; i < strategies.length; i++) {
