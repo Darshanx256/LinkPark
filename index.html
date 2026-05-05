@@ -787,12 +787,10 @@
           // re-query it with a canonical Spotify link if Tinyfish found one. 
           // Odesli's database is much better indexed by Spotify/Apple IDs.
           const oLinks = od?.linksByPlatform || {};
-          if (!oLinks.spotify || !oLinks.appleMusic) {
-            const canon = tf.spotify;
-            if (canon && canon !== data) {
-              const upgrade = await fetchOdesli(canon).catch(() => null);
-              if (upgrade) od = upgrade;
-            }
+          const canon = tf.spotify;
+          if (canon && canon !== data && (!oLinks.spotify || Object.keys(oLinks).length < 3)) {
+            const upgrade = await fetchOdesli(canon).catch(() => null);
+            if (upgrade) od = upgrade;
           }
 
         } else {
@@ -804,11 +802,14 @@
           tf = tfData.status === 'fulfilled' ? tfData.value : {};
         }
 
-        // Metadata
+        // Metadata: Prioritize Odesli's clean metadata, but fallback to iTunes/Search data
         const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
-        document.getElementById('art').src = item.art || ent.thumbnailUrl;
-        document.getElementById('ctitle').textContent = ent.title || item.title;
-        document.getElementById('cartist').textContent = ent.artistName || item.artist;
+        const finalTitle = (ent.title && ent.title !== 'Unknown') ? ent.title : item.title;
+        const finalArtist = (ent.artistName && ent.artistName !== 'Unknown') ? ent.artistName : item.artist;
+        
+        document.getElementById('art').src = item.art || ent.thumbnailUrl || '';
+        document.getElementById('ctitle').textContent = finalTitle;
+        document.getElementById('cartist').textContent = finalArtist;
 
         // Setup Audio Player
         const pWrap = document.getElementById('playerWrap');
