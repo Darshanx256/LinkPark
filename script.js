@@ -27,7 +27,8 @@ const CDICT = {
   'https://is1-ssl.mzstatic.com/image/thumb/': '|m|',
   'https://i.scdn.co/image/': '|s|',
   'https://audio-ssl.itunes.apple.com/apple-assets-us-std-000001/': '|i|',
-  'https://music.apple.com/song/': '|a|',
+  'https://audio-ssl.itunes.apple.com/itunes-assets/': '|a|',
+  'https://music.apple.com/song/': '|o|',
   'https://open.spotify.com/track/': '|p|'
 };
 
@@ -54,7 +55,7 @@ async function decompress(b64) {
 }
 
 async function encodeShare(d) {
-  const sl = {};
+  const sl = [];
   for (const pid in d.l) {
     const k = SREV[pid] || pid;
     let v = d.l[pid];
@@ -65,34 +66,39 @@ async function encodeShare(d) {
     else if (pid === 'tidal') v = v.match(/track\/(\d+)/)?.[1] || v;
     else if (pid === 'deezer') v = v.match(/track\/(\d+)/)?.[1] || v;
     else if (pid === 'pandora') v = v.match(/TR:(\d+)/)?.[1] || v;
-    sl[k] = v;
+    sl.push(`${k}:${v}`);
   }
+
   let v = d.v || '', p = d.p || '';
   for (const pre in CDICT) {
     if (v.startsWith(pre)) v = v.replace(pre, CDICT[pre]);
     if (p.startsWith(pre)) p = p.replace(pre, CDICT[pre]);
   }
-  const json = JSON.stringify([d.t, d.a, v, p, sl]);
-  return await compress(json);
+
+  // Deep Pipe Compression: Title|Artist|Art|Preview|s:ID,a:ID...
+  const pipe = [d.t, d.a, v, p, sl.join(',')].join('|');
+  return await compress(pipe);
 }
 
 async function decodeShare(s) {
-  const json = await decompress(s);
-  if (!json) return null;
+  const pipe = await decompress(s);
+  if (!pipe) return null;
   try {
-    const a = JSON.parse(json);
+    const a = pipe.split('|');
     let v = a[2] || '', p = a[3] || '';
     for (const pre in CDICT) {
       const m = CDICT[pre];
       if (v.startsWith(m)) v = v.replace(m, pre);
       if (p.startsWith(m)) p = p.replace(m, pre);
     }
+
     const l = {};
-    const sl = a[4] || {};
-    for (const k in sl) {
+    const sl = (a[4] || '').split(',');
+    sl.forEach(pair => {
+      const [k, ...rest] = pair.split(':');
       const pid = SMAP[k] || k;
-      let val = sl[k];
-      if (!val.startsWith('http')) {
+      let val = rest.join(':');
+      if (val && !val.startsWith('http')) {
         if (pid === 'spotify') val = `https://open.spotify.com/track/${val}`;
         else if (pid === 'appleMusic') val = `https://music.apple.com/song/${val}`;
         else if (pid === 'youtubeMusic') val = `https://music.youtube.com/watch?v=${val}`;
@@ -101,8 +107,8 @@ async function decodeShare(s) {
         else if (pid === 'deezer') val = `https://www.deezer.com/track/${val}`;
         else if (pid === 'pandora') val = `https://www.pandora.com/TR:${val}`;
       }
-      l[pid] = val;
-    }
+      if (pid && val) l[pid] = val;
+    });
     return { t: a[0], a: a[1], v, p, l };
   } catch (e) { return null; }
 }
