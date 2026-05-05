@@ -53,6 +53,6 @@ Perfect for testing things out on your machine without setting up a server.
 - **Metadata & Audio Previews**: iTunes Search API
 
 ### Design
-The LinkPark logo uses the **OpenSans** font. 
+The LinkPark logo uses the **Open Sans** font (licensed under the Apache License, Version 2.0). 
 
-*License: Standard open-source terms.*
+*Free to do whatever, just don't abuse my api at preview site :D*
