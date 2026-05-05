@@ -878,9 +878,9 @@
         // Tinyfish fallbacks
         if (!links.spotify && tf.spotify) links.spotify = tf.spotify;
         if (!links.youtubeMusic && tf.youtubeMusic) links.youtubeMusic = tf.youtubeMusic;
-        // Apple Music fallback: use item.appleUrl from search, or the original dropped URL if it was an Apple Music link
+        // Apple Music fallback
         if (!links.appleMusic) {
-          if (typeof data !== 'string') links.appleMusic = item.appleUrl;
+          if (item.appleUrl) links.appleMusic = item.appleUrl;
           else if (typeof data === 'string' && data.includes('music.apple.com')) links.appleMusic = data;
         }
 
