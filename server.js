@@ -17,7 +17,9 @@ let ALLOWED_IPS = [];
 try {
     const list = JSON.parse(process.env.IP_ALLOWLIST || '{}');
     if (list.prefixes) {
-        ALLOWED_IPS = list.prefixes.map(p => p.ip_prefix.split('/')[0]);
+        ALLOWED_IPS = list.prefixes
+            .filter(p => p && p.ip_prefix)
+            .map(p => p.ip_prefix.split('/')[0]);
     }
 } catch (e) {
     console.error('Failed to parse IP_ALLOWLIST:', e.message);
@@ -41,13 +43,21 @@ app.use((req, res, next) => {
     // If no allowlist is set, let everything pass (CORS still protects browsers)
     if (ALLOWED_IPS.length === 0) return next();
     
-    const clientIp = req.ip;
-    if (ALLOWED_IPS.includes(clientIp)) return next();
+    // Normalize IP (handle IPv6 mapped IPv4 like ::ffff:1.2.3.4)
+    let clientIp = req.ip || '';
+    if (clientIp.startsWith('::ffff:')) clientIp = clientIp.replace('::ffff:', '');
+    
+    // Allow if whitelisted or if it's a local request
+    if (ALLOWED_IPS.includes(clientIp) || clientIp === '127.0.0.1' || clientIp === '::1') return next();
     
     // Also allow if it's a browser request from a whitelisted origin (already passed CORS)
     if (req.headers.origin && ALLOWED_ORIGINS.includes(req.headers.origin)) return next();
 
-    res.status(403).json({ error: 'Access denied: IP not allowed' });
+    console.log(`Access denied for IP: ${clientIp}`);
+    res.status(403).json({ 
+        error: 'Access denied: IP not allowed',
+        yourIp: clientIp 
+    });
 });
 
 // Odesli Proxy Route
