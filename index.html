@@ -945,7 +945,7 @@
 
     // Easter Egg Placeholder Rotation
     const ph = ['Type a few lyrics…', 'Search a song…', 'Drop a link…'];
-    let phIdx = 0;
+    let phIdx = 1; // Starts at 1 so the first rotation goes to 'Drop a link...'
     setInterval(() => {
       if (document.activeElement !== qEl && qEl.value === '') {
         qEl.classList.add('ph-fade');
