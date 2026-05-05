@@ -8,11 +8,18 @@ const PORT = process.env.PORT || 3000;
 
 // The API Key (Stored safely as an environment variable)
 const TFKEY = process.env.TFKEY;
-// Optional: Your static site's URL for restricted CORS
-const ALLOWED_ORIGIN = process.env.SERVICE;
+// Support multiple comma-separated origins (e.g. "https://site1.com, https://site2.com")
+const ALLOWED_ORIGINS = (process.env.SERVICE || '').split(',').map(s => s.trim()).filter(Boolean);
 
 app.use(cors({
-    origin: ALLOWED_ORIGIN || '*'
+    origin: (origin, callback) => {
+        // Allow if no origin (like UptimeRobot/Server-to-server) or if it matches our list
+        if (!origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('CORS blocked: Origin not allowed'));
+        }
+    }
 }));
 
 // Odesli Proxy Route
@@ -48,10 +55,10 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-if (ALLOWED_ORIGIN) {
+if (ALLOWED_ORIGINS.length > 0) {
     // Hybrid mode: SERVICE is set, so we're a proxy only
     // Don't serve any static files — the frontend lives elsewhere
-    console.log(`Proxy-only mode. Accepting requests from: ${ALLOWED_ORIGIN}`);
+    console.log(`Proxy-only mode. Whitelist: ${ALLOWED_ORIGINS.join(', ')}`);
 } else {
     // Standalone mode: serve the full frontend too
     app.use(express.static(__dirname));
