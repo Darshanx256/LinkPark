@@ -56,27 +56,27 @@ async function decompress(b64) {
 
 async function encodeShare(d) {
   const sl = [];
-  for (const pid in d.l) {
-    const k = SREV[pid] || pid;
-    let v = d.l[pid];
-    if (pid === 'spotify') v = v.match(/track\/([a-zA-Z0-9]+)/)?.[1] || v;
-    else if (pid === 'appleMusic') v = v.match(/[?&]i=(\d+)/)?.[1] || v;
-    else if (pid === 'youtubeMusic') v = v.match(/[?&]v=([a-zA-Z0-9_-]+)/)?.[1] || v;
-    else if (pid === 'amazonMusic') v = v.match(/[?&]trackAsin=([a-zA-Z0-9]+)/)?.[1] || v;
-    else if (pid === 'tidal') v = v.match(/track\/(\d+)/)?.[1] || v;
-    else if (pid === 'deezer') v = v.match(/track\/(\d+)/)?.[1] || v;
-    else if (pid === 'pandora') v = v.match(/TR:(\d+)/)?.[1] || v;
-    sl.push(`${k}:${v}`);
+  // Store only "Odesli-exclusive" or "Hard to find" IDs to save space.
+  // Spotify and YT Music can be re-resolved via Tinyfish for free.
+  const EXCLUSIVE = ['amazonMusic', 'tidal', 'deezer', 'pandora'];
+  
+  for (const pid of EXCLUSIVE) {
+    if (d.l[pid]) {
+      const k = SREV[pid] || pid;
+      let v = d.l[pid];
+      if (pid === 'amazonMusic') v = v.match(/[?&]trackAsin=([a-zA-Z0-9]+)/)?.[1] || v;
+      else if (pid === 'tidal') v = v.match(/track\/(\d+)/)?.[1] || v;
+      else if (pid === 'deezer') v = v.match(/track\/(\d+)/)?.[1] || v;
+      else if (pid === 'pandora') v = v.match(/TR:(\d+)/)?.[1] || v;
+      sl.push(`${k}:${v}`);
+    }
   }
 
-  let v = d.v || '', p = d.p || '';
-  for (const pre in CDICT) {
-    if (v.startsWith(pre)) v = v.replace(pre, CDICT[pre]);
-    if (p.startsWith(pre)) p = p.replace(pre, CDICT[pre]);
-  }
+  // Get iTunes ID from Apple link if available
+  const itid = d.l.appleMusic?.match(/[?&]i=(\d+)/)?.[1] || '';
 
-  // Deep Pipe Compression: Title|Artist|Art|Preview|s:ID,a:ID...
-  const pipe = [d.t, d.a, v, p, sl.join(',')].join('|');
+  // Format: Title|Artist|iTunesID|ExclusiveLinks
+  const pipe = [d.t, d.a, itid, sl.join(',')].join('|');
   return await compress(pipe);
 }
 
@@ -85,31 +85,21 @@ async function decodeShare(s) {
   if (!pipe) return null;
   try {
     const a = pipe.split('|');
-    let v = a[2] || '', p = a[3] || '';
-    for (const pre in CDICT) {
-      const m = CDICT[pre];
-      if (v.startsWith(m)) v = v.replace(m, pre);
-      if (p.startsWith(m)) p = p.replace(m, pre);
-    }
-
-    const l = {};
-    const sl = (a[4] || '').split(',');
+    const links = {};
+    const sl = (a[3] || '').split(',');
     sl.forEach(pair => {
       const [k, ...rest] = pair.split(':');
       const pid = SMAP[k] || k;
       let val = rest.join(':');
       if (val && !val.startsWith('http')) {
-        if (pid === 'spotify') val = `https://open.spotify.com/track/${val}`;
-        else if (pid === 'appleMusic') val = `https://music.apple.com/song/${val}`;
-        else if (pid === 'youtubeMusic') val = `https://music.youtube.com/watch?v=${val}`;
-        else if (pid === 'amazonMusic') val = `https://music.amazon.com/albums/_?trackAsin=${val}`;
+        if (pid === 'amazonMusic') val = `https://music.amazon.com/albums/_?trackAsin=${val}`;
         else if (pid === 'tidal') val = `https://listen.tidal.com/track/${val}`;
         else if (pid === 'deezer') val = `https://www.deezer.com/track/${val}`;
         else if (pid === 'pandora') val = `https://www.pandora.com/TR:${val}`;
       }
-      if (pid && val) l[pid] = val;
+      if (pid && val) links[pid] = val;
     });
-    return { t: a[0], a: a[1], v, p, l };
+    return { t: a[0], a: a[1], itunesId: a[2], l: links };
   } catch (e) { return null; }
 }
 /** 
@@ -216,11 +206,42 @@ window.addEventListener('load', async () => {
     const data = await decodeShare(s);
     if (data) {
       setLoad(true);
-      setTimeout(() => {
-        populateUI(data.t, data.a, data.v, data.p, data.l);
-        setLoad(false);
-        cardEl.style.display = 'block';
-      }, 50);
+      // Immediate view: Title and Artist show up first
+      document.getElementById('ctitle').textContent = data.t;
+      document.getElementById('cartist').textContent = data.a;
+      cardEl.style.display = 'block';
+
+      // Background Resolution: Get high-res assets and links
+      const myId = ++lastResolveId;
+      try {
+        let art = '', preview = '', appleUrl = '';
+        
+        // 1. Fetch iTunes info (cheap, covers art, preview, apple link)
+        if (data.itunesId) {
+          const r = await fetch(`https://itunes.apple.com/lookup?id=${data.itunesId}&country=${COUNTRY}`);
+          const d = await r.json();
+          if (d.results?.[0]) {
+            const track = d.results[0];
+            art = track.artworkUrl100.replace('100x100bb', '600x600bb');
+            preview = track.previewUrl;
+            appleUrl = track.trackViewUrl;
+          }
+        }
+
+        // 2. Fetch Tinyfish (cheap, covers spotify, youtube)
+        const tf = await fetchTinyfish(data.t, data.a).catch(() => ({}));
+        
+        if (myId !== lastResolveId) return;
+
+        // 3. Merge with Odesli links from share
+        const merged = { ...data.l };
+        if (tf.spotify) merged.spotify = tf.spotify;
+        if (tf.youtubeMusic) merged.youtubeMusic = tf.youtubeMusic;
+        if (appleUrl) merged.appleMusic = appleUrl;
+
+        populateUI(data.t, data.a, art, preview, merged);
+      } catch (e) { console.error('Hybrid resolve failed', e); }
+      setLoad(false);
     }
   }
 });
