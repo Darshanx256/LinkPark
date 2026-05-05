@@ -523,11 +523,12 @@
       <p>Find any song on every platform</p>
     </header>
 
-    <div class="search-wrap">
+    <form class="search-wrap" id="searchForm">
       <input class="search-input" id="q" type="search" placeholder="Search a song…" autocomplete="off"
         spellcheck="false">
+      <button type="submit" style="display:none"></button>
       <div class="dropdown" id="dd"></div>
-    </div>
+    </form>
 
     <p class="hint" id="hint">↑ ↓ navigate &nbsp;·&nbsp; Enter select &nbsp;·&nbsp; Esc close</p>
     <div class="loader" id="loader"><span></span><span></span><span></span></div>

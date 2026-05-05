@@ -231,6 +231,21 @@ function pick(i) {
   resolve(it);
 }
 
+/** Handles mobile 'Go' / 'Enter' form submission. */
+document.getElementById('searchForm')?.addEventListener('submit', e => {
+  e.preventDefault();
+  if (ddEl.style.display === 'block' && idx >= 0) {
+    pick(idx);
+  } else {
+    const v = qEl.value.trim();
+    if (v) {
+      clearTimeout(timer);
+      closeDD();
+      resolve(v);
+    }
+  }
+});
+
 /**
  * Main orchestration for resolving song links.
  * Coordinates Odesli, Tinyfish, and iTunes to provide full platform coverage.
@@ -424,11 +439,15 @@ async function resolve(data) {
       linksEl.appendChild(makeRow(p, href));
     });
 
-    if (!found) throw new Error('No links found.');
+    if (!found) throw new Error('NoStreamingLinks');
     cardEl.style.display = 'block';
 
   } catch (e) {
-    showErr('Could not fetch links. Try again.'); 
+    if (e.message === 'NoStreamingLinks') {
+      showErr('No streaming links found for this track.');
+    } else {
+      showErr('Could not fetch links. Try again.');
+    }
     console.error(e);
   } finally {
     setLoad(false);

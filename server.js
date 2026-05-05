@@ -154,18 +154,31 @@ app.get('/api/search', async (req, res) => {
     if (!query) return res.status(400).json({ error: 'Query is required' });
     if (TFKEYS.length === 0) return res.status(500).json({ error: 'Missing API Key' });
 
-    const currentKey = TFKEYS[keyIndex % TFKEYS.length];
-    keyIndex++;
+    /**
+     * Key Rotation with Retries.
+     * Attempts to fulfill the search request using up to 3 different keys 
+     * if the primary key is rate-limited or fails.
+     */
+    const maxAttempts = Math.min(TFKEYS.length, 3);
+    for (let i = 0; i < maxAttempts; i++) {
+        const currentKey = TFKEYS[keyIndex % TFKEYS.length];
+        keyIndex++;
 
-    try {
-        const response = await fetch(`https://api.search.tinyfish.ai/?query=${encodeURIComponent(query)}`, {
-            headers: { 'X-API-Key': currentKey }
-        });
-        const data = await response.json();
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: 'Search failed' });
+        try {
+            const response = await fetch(`https://api.search.tinyfish.ai/?query=${encodeURIComponent(query)}`, {
+                headers: { 'X-API-Key': currentKey }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                return res.json(data);
+            }
+            console.warn(`Tinyfish key rotation attempt ${i + 1} failed with status: ${response.status}`);
+        } catch (error) {
+            console.warn(`Tinyfish key rotation attempt ${i + 1} errored:`, error.message);
+        }
     }
+
+    res.status(502).json({ error: 'Search failed after multiple API key rotation attempts.' });
 });
 
 /**
