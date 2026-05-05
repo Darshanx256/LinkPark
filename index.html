@@ -859,7 +859,9 @@
 
     // ── Odesli fetch ───────────────────────────────────────────────────────────
     async function fetchOdesli(url) {
-      const r = await fetch(`${ODESLI}?url=${enc(url)}&userCountry=${COUNTRY}`);
+      const target = `${ODESLI}?url=${enc(url)}&userCountry=${COUNTRY}`;
+      // Wrap in corsproxy.io to bypass GitHub Pages strict CORS blocking
+      const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(target)}`);
       if (!r.ok) throw new Error(`odesli ${r.status}`);
       return r.json();
     }

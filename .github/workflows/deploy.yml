@@ -28,6 +28,10 @@ jobs:
         env:
           TFKEY: ${{ secrets.TFKEY }}
         run: |
+          if [ -z "$TFKEY" ]; then
+            echo "Error: TFKEY secret is empty! Please add it to your repository secrets."
+            exit 1
+          fi
           # Replaces the placeholder in the code with the actual secret
           sed -i "s/YOUR_TINYFISH_API_KEY_HERE/$TFKEY/g" index.html
           
