@@ -573,9 +573,12 @@
   <script>
     // ── Constants ──────────────────────────────────────────────────────────────
     const ODESLI = 'https://api.song.link/v1-alpha.1/links';
-    // Fallback key (should be overridden by config.js for local dev)
+    // PROXY: Set this to your proxy URL (e.g. 'https://my-proxy.com/api/search') 
+    // to hide your API key. Set to '/api/search' if hosting standalone on one server.
+    // Leave empty to use direct API (requires secret injection or config.js).
+    const PROXY = ''; 
     const TFKEY = window.LINKPARK_CONFIG?.TFKEY || 'YOUR_TINYFISH_API_KEY_HERE';
-    const TFAPI = 'https://api.search.tinyfish.ai';
+    const TFAPI = PROXY || 'https://api.search.tinyfish.ai';
     const COUNTRY = navigator.language.split('-')[1]?.toUpperCase() || 'US';
 
     // Platform definitions — order = display priority
@@ -863,13 +866,14 @@
 
     // Fire parallel searches for maximum accuracy on niche songs
     async function fetchTinyfish(title, artist) {
-      const headers = { 'X-API-Key': TFKEY };
+      const headers = PROXY ? {} : { 'X-API-Key': TFKEY };
       const out = {};
+      const sep = TFAPI.includes('api.search.tinyfish.ai') ? '/' : '';
 
       try {
         const [spRes, ytRes] = await Promise.allSettled([
-          fetch(`${TFAPI}?query=${enc(title + ' ' + artist + ' spotify track')}`, { headers }).then(r => r.ok ? r.json() : null),
-          fetch(`${TFAPI}?query=${enc(title + ' ' + artist + ' youtube music')}`, { headers }).then(r => r.ok ? r.json() : null)
+          fetch(`${TFAPI}${sep}?query=${enc(title + ' ' + artist + ' spotify track')}`, { headers }).then(r => r.ok ? r.json() : null),
+          fetch(`${TFAPI}${sep}?query=${enc(title + ' ' + artist + ' youtube music')}`, { headers }).then(r => r.ok ? r.json() : null)
         ]);
 
         if (spRes.status === 'fulfilled' && spRes.value?.results) {

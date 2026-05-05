@@ -12,20 +12,38 @@ What's different here? With all the available APIs (Odesli, Tinyfish, and Apple 
 
 ### How to use it
 
-It's just a single HTML file. Either you can run it locally , but you would need to setup Tinyfish API for that, or use the deployed version for less pain:
+### Deployment & Local Setup
+
+LinkPark is flexible. You can run it in three different ways depending on how much you care about API key security and "pain":
+
+#### 1. The Standalone Server (Recommended for zero-effort hosting)
+If you want to host everything in one place (like on Render, Vercel, or a VPS), just point your hosting service to this repository.
+- The `server.js` acts as both the web server and a secure API proxy.
+- **Setup**: 
+  - Add `TFKEY` to your environment variables.
+  - Set `PROXY = '/api/search'` in `index.html` and push.
+  - Your API key stays safe on the server and is never seen by the browser.
+
+#### 2. The Hybrid Way (GitHub Pages + External Proxy)
+You can keep the frontend on GitHub Pages and host the proxy elsewhere.
+- **Setup**: 
+  - Deploy the `server.js` to a service like Vercel or Render.
+  - Add `TFKEY` and `SERVICE` (your GitHub Pages URL) to that service's environment variables.
+  - Set `PROXY = 'https://your-proxy-url.com/api/search'` in `index.html` and push.
+- This is great if you want to keep the "static" feel of GitHub Pages but still want a secure key.
+
+#### 3. I want pain (Local Development)
+Perfect for testing things out on your machine without setting up a server.
+- **Setup**:
+  - Clone the folder.
+  - Create a `config.js` in the root:
+    ```javascript
+    window.LINKPARK_CONFIG = { TFKEY: "your_key_here" };
+    ```
+  - Leave `PROXY = ''` in `index.html`.
+  - Open `index.html` in your browser. (Note: Search might fail in some browsers due to CORS if run directly from a file).
 
 👉 **[Live Demo: LinkPark](https://darshanx256.github.io/LinkPark/)**
-
-#### I want pain
-
-1. Clone or download this folder.
-2. The search engine relies on the Tinyfish API. Create a `config.js` file in the root folder (it's ignored by git) and drop your key in:
-   ```javascript
-   window.LINKPARK_CONFIG = {
-     TFKEY: "your_key_here"
-   };
-   ```
-3. Open `index.html` in a browser. That's it. You can throw it on Vercel or GitHub Pages if you want to host it.
 
 ### What it uses under the hood
 
