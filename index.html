@@ -805,9 +805,18 @@
           }
 
           // Final Fail-safe: Search iTunes by keyword if still no preview
-          if (!item.previewUrl && item.title !== 'Unknown') {
+          const m = () => {
+            const e = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
+            return {
+              t: (e.title && e.title !== 'Unknown') ? e.title : item.title,
+              a: (e.artistName && e.artistName !== 'Unknown') ? e.artistName : item.artist
+            };
+          };
+
+          if (!item.previewUrl && m().t !== 'Unknown') {
             try {
-              const q = cleanQ(item.title) + ' ' + cleanQ(item.artist);
+              const { t, a } = m();
+              const q = cleanQ(t) + ' ' + cleanQ(a);
               const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`);
               const d = await r.json();
               if (d.results?.[0]) {
@@ -826,10 +835,24 @@
           if (myId !== lastResolveId) return;
           od = odesliData.status === 'fulfilled' ? odesliData.value : null;
           tf = tfData.status === 'fulfilled' ? tfData.value : {};
-          await pullItunes(getItunesId(od)); // Fill preview if missing from search
+          await pullItunes(getItunesId(od));
+
+          // Fail-safe for search mode too
+          if (!item.previewUrl) {
+            try {
+              const q = cleanQ(item.title) + ' ' + cleanQ(item.artist);
+              const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`);
+              const d = await r.json();
+              if (d.results?.[0]) {
+                item.previewUrl = d.results[0].previewUrl;
+                item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
+                if (!item.appleUrl) item.appleUrl = d.results[0].trackViewUrl;
+              }
+            } catch (e) { }
+          }
         }
 
-        // Metadata: Prioritize Odesli's clean metadata, but fallback to iTunes/Search data
+        // Metadata: Prioritize Odesli's clean metadata
         const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
         const finalTitle = (ent.title && ent.title !== 'Unknown') ? ent.title : item.title;
         const finalArtist = (ent.artistName && ent.artistName !== 'Unknown') ? ent.artistName : item.artist;
