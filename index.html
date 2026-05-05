@@ -783,6 +783,18 @@
           }
           if (tasks.length) await Promise.allSettled(tasks);
 
+          // Deep Upgrade: If Odesli returned sparse results for a niche link (like YT Music), 
+          // re-query it with a canonical Spotify link if Tinyfish found one. 
+          // Odesli's database is much better indexed by Spotify/Apple IDs.
+          const oLinks = od?.linksByPlatform || {};
+          if (!oLinks.spotify || !oLinks.appleMusic) {
+            const canon = tf.spotify;
+            if (canon && canon !== data) {
+              const upgrade = await fetchOdesli(canon).catch(() => null);
+              if (upgrade) od = upgrade;
+            }
+          }
+
         } else {
           const [odesliData, tfData] = await Promise.allSettled([
             fetchOdesli(item.appleUrl),
