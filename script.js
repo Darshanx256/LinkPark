@@ -32,56 +32,74 @@ const CDICT = {
 };
 
 /**
- * Micro-Encoding Logic v2.
- * Uses a domain-aware compression dictionary and platform ID extraction 
- * to create the smallest possible universal share URL.
+ * Advanced Compression & Encoding Engine.
+ * Uses browser-native CompressionStream (Deflate) and URL-safe Base64 
+ * to create the smallest possible shareable links without external libraries.
  */
-function encodeShare(d) {
-  const shortLinks = {};
-  for (const pid in d.l) {
-    const key = SREV[pid] || pid;
-    let val = d.l[pid];
-    if (pid === 'spotify') val = val.match(/track\/([a-zA-Z0-9]+)/)?.[1] || val;
-    else if (pid === 'appleMusic') val = val.match(/[?&]i=(\d+)/)?.[1] || val;
-    else if (pid === 'youtubeMusic') val = val.match(/[?&]v=([a-zA-Z0-9_-]+)/)?.[1] || val;
-    shortLinks[key] = val;
-  }
-
-  // Compress common prefixes in artwork and preview URLs
-  let v = d.v || '', p = d.p || '';
-  for (const prefix in CDICT) {
-    if (v.startsWith(prefix)) v = v.replace(prefix, CDICT[prefix]);
-    if (p.startsWith(prefix)) p = p.replace(prefix, CDICT[prefix]);
-  }
-
-  return btoa(unescape(encodeURIComponent(JSON.stringify([d.t, d.a, v, p, shortLinks]))));
+async function compress(str) {
+  const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('deflate'));
+  const buffer = await new Response(stream).arrayBuffer();
+  return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function decodeShare(s) {
+async function decompress(b64) {
   try {
-    const a = JSON.parse(decodeURIComponent(escape(atob(s))));
-    let v = a[2] || '', p = a[3] || '';
-    
-    // Decompress prefixes
-    for (const prefix in CDICT) {
-      const marker = CDICT[prefix];
-      if (v.startsWith(marker)) v = v.replace(marker, prefix);
-      if (p.startsWith(marker)) p = p.replace(marker, prefix);
-    }
+    const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+    return await new Response(stream).text();
+  } catch (e) { return null; }
+}
 
-    const links = {};
-    const shortLinks = a[4] || {};
-    for (const key in shortLinks) {
-      const pid = SMAP[key] || key;
-      let val = shortLinks[key];
+async function encodeShare(d) {
+  const sl = {};
+  for (const pid in d.l) {
+    const k = SREV[pid] || pid;
+    let v = d.l[pid];
+    if (pid === 'spotify') v = v.match(/track\/([a-zA-Z0-9]+)/)?.[1] || v;
+    else if (pid === 'appleMusic') v = v.match(/[?&]i=(\d+)/)?.[1] || v;
+    else if (pid === 'youtubeMusic') v = v.match(/[?&]v=([a-zA-Z0-9_-]+)/)?.[1] || v;
+    else if (pid === 'tidal') v = v.match(/track\/(\d+)/)?.[1] || v;
+    else if (pid === 'deezer') v = v.match(/track\/(\d+)/)?.[1] || v;
+    sl[k] = v;
+  }
+  let v = d.v || '', p = d.p || '';
+  for (const pre in CDICT) {
+    if (v.startsWith(pre)) v = v.replace(pre, CDICT[pre]);
+    if (p.startsWith(pre)) p = p.replace(pre, CDICT[pre]);
+  }
+  const json = JSON.stringify([d.t, d.a, v, p, sl]);
+  return await compress(json);
+}
+
+async function decodeShare(s) {
+  const json = await decompress(s);
+  if (!json) return null;
+  try {
+    const a = JSON.parse(json);
+    let v = a[2] || '', p = a[3] || '';
+    for (const pre in CDICT) {
+      const m = CDICT[pre];
+      if (v.startsWith(m)) v = v.replace(m, pre);
+      if (p.startsWith(m)) p = p.replace(m, pre);
+    }
+    const l = {};
+    const sl = a[4] || {};
+    for (const k in sl) {
+      const pid = SMAP[k] || k;
+      let val = sl[k];
       if (!val.startsWith('http')) {
         if (pid === 'spotify') val = `https://open.spotify.com/track/${val}`;
         else if (pid === 'appleMusic') val = `https://music.apple.com/song/${val}`;
         else if (pid === 'youtubeMusic') val = `https://music.youtube.com/watch?v=${val}`;
+        else if (pid === 'tidal') val = `https://tidal.com/track/${val}`;
+        else if (pid === 'deezer') val = `https://www.deezer.com/track/${val}`;
       }
-      links[pid] = val;
+      l[pid] = val;
     }
-    return { t: a[0], a: a[1], v, p, l: links };
+    return { t: a[0], a: a[1], v, p, l };
   } catch (e) { return null; }
 }
 /** 
@@ -167,12 +185,13 @@ document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => 
   if (!currentData) return;
   const btn = e.currentTarget;
   const url = new URL(window.location.href);
-  url.searchParams.set('s', encodeShare(currentData));
+  const hash = await encodeShare(currentData);
+  url.searchParams.set('s', hash);
   try {
     await navigator.clipboard.writeText(url.toString());
     const oldHtml = btn.innerHTML;
     btn.classList.add('copied');
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied`;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied Link`;
     setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = oldHtml; }, 2000);
   } catch (err) { }
 });
@@ -181,10 +200,10 @@ document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => 
  * Instantly renders a shared card from URL parameters.
  * Bypasses all API calls to provide immediate visual feedback to recipients.
  */
-window.addEventListener('load', () => {
+window.addEventListener('load', async () => {
   const s = new URLSearchParams(window.location.search).get('s');
   if (s) {
-    const data = decodeShare(s);
+    const data = await decodeShare(s);
     if (data) {
       setLoad(true);
       setTimeout(() => {
