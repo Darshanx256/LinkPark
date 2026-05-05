@@ -61,8 +61,10 @@ async function encodeShare(d) {
     if (pid === 'spotify') v = v.match(/track\/([a-zA-Z0-9]+)/)?.[1] || v;
     else if (pid === 'appleMusic') v = v.match(/[?&]i=(\d+)/)?.[1] || v;
     else if (pid === 'youtubeMusic') v = v.match(/[?&]v=([a-zA-Z0-9_-]+)/)?.[1] || v;
+    else if (pid === 'amazonMusic') v = v.match(/[?&]trackAsin=([a-zA-Z0-9]+)/)?.[1] || v;
     else if (pid === 'tidal') v = v.match(/track\/(\d+)/)?.[1] || v;
     else if (pid === 'deezer') v = v.match(/track\/(\d+)/)?.[1] || v;
+    else if (pid === 'pandora') v = v.match(/TR:(\d+)/)?.[1] || v;
     sl[k] = v;
   }
   let v = d.v || '', p = d.p || '';
@@ -94,8 +96,10 @@ async function decodeShare(s) {
         if (pid === 'spotify') val = `https://open.spotify.com/track/${val}`;
         else if (pid === 'appleMusic') val = `https://music.apple.com/song/${val}`;
         else if (pid === 'youtubeMusic') val = `https://music.youtube.com/watch?v=${val}`;
-        else if (pid === 'tidal') val = `https://tidal.com/track/${val}`;
+        else if (pid === 'amazonMusic') val = `https://music.amazon.com/albums/_?trackAsin=${val}`;
+        else if (pid === 'tidal') val = `https://listen.tidal.com/track/${val}`;
         else if (pid === 'deezer') val = `https://www.deezer.com/track/${val}`;
+        else if (pid === 'pandora') val = `https://www.pandora.com/TR:${val}`;
       }
       l[pid] = val;
     }
