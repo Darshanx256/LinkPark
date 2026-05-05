@@ -883,11 +883,12 @@
       const out = {};
 
       // Only include artist if it's known — 'Unknown' poisons search results on niche tracks
-      const knownArtist = artist && artist !== 'Unknown' ? artist + ' ' : '';
+      const knownArtist = (artist && artist !== 'Unknown') ? artist : '';
+      const qBase = title + (knownArtist ? ' ' + knownArtist : '');
       try {
         const [spRes, ytRes] = await Promise.allSettled([
-          fetch(`${TFAPI}?query=${enc(title + ' ' + knownArtist + 'spotify track')}`, { headers }).then(r => r.ok ? r.json() : null),
-          fetch(`${TFAPI}?query=${enc(title + ' ' + knownArtist + 'youtube music')}`, { headers }).then(r => r.ok ? r.json() : null)
+          fetch(`${TFAPI}?query=${enc(qBase + ' spotify track')}`, { headers }).then(r => r.ok ? r.json() : null),
+          fetch(`${TFAPI}?query=${enc(qBase + ' youtube music')}`, { headers }).then(r => r.ok ? r.json() : null)
         ]);
 
         if (spRes.status === 'fulfilled' && spRes.value?.results) {
