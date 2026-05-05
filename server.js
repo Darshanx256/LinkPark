@@ -105,15 +105,39 @@ app.use((req, res, next) => {
 app.get('/api/odesli', async (req, res) => {
     const { url, userCountry } = req.query;
     if (!url) return res.status(400).json({ error: 'url is required' });
-    try {
-        const response = await fetch(
-            `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}&userCountry=${userCountry || 'US'}`
-        );
-        const data = await response.json();
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: 'Odesli fetch failed' });
+
+    const target = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}&userCountry=${userCountry || 'US'}`;
+    
+    /**
+     * Array of fetch strategies to bypass potential Odesli IP blocks.
+     * Strategies include direct fetch and multiple public CORS wrappers.
+     */
+    const strategies = [
+        async () => await fetch(target),
+        async () => await fetch(`https://corsproxy.io/?${encodeURIComponent(target)}`),
+        async () => {
+            const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(target)}`);
+            if (!r.ok) return r;
+            const j = await r.json();
+            // AllOrigins returns the target response as a string inside a 'contents' field.
+            return { ok: true, json: () => JSON.parse(j.contents) };
+        }
+    ];
+
+    for (let i = 0; i < strategies.length; i++) {
+        try {
+            const response = await strategies[i]();
+            if (response.ok) {
+                const data = await response.json();
+                return res.json(data);
+            }
+            console.warn(`Odesli strategy ${i} (Attempt ${i + 1}/${strategies.length}) failed: ${response.status}`);
+        } catch (error) {
+            console.warn(`Odesli strategy ${i} error:`, error.message);
+        }
     }
+
+    res.status(502).json({ error: 'Odesli resolution failed across all available proxy strategies.' });
 });
 
 /**
