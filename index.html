@@ -770,6 +770,8 @@
           } catch (e) { }
         };
 
+        const cleanQ = (s) => s.replace(/\(.*\)|\[.*\]|- Single|- EP|Official.*|Audio/gi, '').trim();
+
         if (typeof data === 'string') {
           od = await fetchOdesli(data);
           if (myId !== lastResolveId) return;
@@ -805,7 +807,8 @@
           // Final Fail-safe: Search iTunes by keyword if still no preview
           if (!item.previewUrl && item.title !== 'Unknown') {
             try {
-              const r = await fetch(`https://itunes.apple.com/search?term=${enc(item.title + ' ' + item.artist)}&entity=song&limit=1&country=${COUNTRY}`);
+              const q = cleanQ(item.title) + ' ' + cleanQ(item.artist);
+              const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`);
               const d = await r.json();
               if (d.results?.[0]) {
                 item.previewUrl = d.results[0].previewUrl;
