@@ -788,15 +788,48 @@
           if (tasks.length) await Promise.allSettled(tasks);
           if (myId !== lastResolveId) return;
 
-          // Deep Upgrade: If Odesli returned sparse results for a niche link (like YT Music), 
-          // re-query it with a canonical Spotify link if Tinyfish found one. 
-          // Odesli's database is much better indexed by Spotify/Apple IDs.
-          const oLinks = od?.linksByPlatform || {};
+          // Deep Upgrade: If results are sparse, re-query Odesli with canonical Spotify link
+          let oLinks = od?.linksByPlatform || {};
           const canon = tf.spotify;
           if (canon && canon !== data && (!oLinks.spotify || Object.keys(oLinks).length < 3)) {
             const upgrade = await fetchOdesli(canon).catch(() => null);
-            if (upgrade) od = upgrade;
-            if (myId !== lastResolveId) return;
+            if (upgrade) {
+              od = upgrade;
+              if (myId !== lastResolveId) return;
+              oLinks = od.linksByPlatform || {}; // Update reference
+
+              // If upgrade found Apple Music and we still miss preview, fetch it
+              if (!item.previewUrl) {
+                const am = oLinks.appleMusic;
+                let newItId = null;
+                if (am?.entityUniqueId) {
+                  const amEnt = od.entitiesByUniqueId[am.entityUniqueId];
+                  if (amEnt?.apiProvider === 'itunes') newItId = amEnt.id;
+                }
+                if (!newItId && am?.url) newItId = am.url.match(/[?&]i=(\d+)/)?.[1];
+                if (newItId) {
+                  await fetch(`https://itunes.apple.com/lookup?id=${newItId}&entity=song&country=${COUNTRY}`)
+                    .then(r => r.json()).then(d => {
+                      if (d.results?.[0]) {
+                        item.previewUrl = d.results[0].previewUrl;
+                        item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
+                      }
+                    }).catch(() => { });
+                }
+              }
+            }
+          }
+
+          // Final Fail-safe: If still no preview, search iTunes by keyword
+          if (!item.previewUrl && item.title !== 'Unknown') {
+            await fetch(`https://itunes.apple.com/search?term=${enc(item.title + ' ' + item.artist)}&entity=song&limit=1&country=${COUNTRY}`)
+              .then(r => r.json()).then(d => {
+                if (d.results?.[0]) {
+                  item.previewUrl = d.results[0].previewUrl;
+                  item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
+                  if (!item.appleUrl) item.appleUrl = d.results[0].trackViewUrl;
+                }
+              }).catch(() => { });
           }
 
         } else {
