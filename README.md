@@ -16,6 +16,10 @@ Whats diffrent here? With all the available APIs (Odesli, Tinyfish and Apple Mus
 
 It's just a single HTML file. Either you can run it locally , but you would need to setup Tinyfish API for that, or use the deployed version for less pain:
 
+👉 **[Live Demo: LinkPark](https://darshanx256.github.io/LinkPark/)**
+
+#### I want pain
+
 1. Clone or download this folder.
 2. The search engine relies on the Tinyfish API. Create a `config.js` file in the root folder (it's ignored by git) and drop your key in:
    ```javascript
