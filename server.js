@@ -27,6 +27,17 @@ try {
 
 app.set('trust proxy', true);
 
+// 1. Health Check (Always accessible, no IP check)
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
+// 2. Logger (Help debug what UptimeRobot is doing)
+app.use((req, res, next) => {
+    let clientIp = req.ip || '';
+    if (clientIp.startsWith('::ffff:')) clientIp = clientIp.replace('::ffff:', '');
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - IP: ${clientIp}`);
+    next();
+});
+
 app.use(cors({
     origin: (origin, callback) => {
         // Allow if origin is in our whitelist or if it's a non-browser request (no origin)
