@@ -52,4 +52,7 @@ Perfect for testing things out on your machine without setting up a server.
 - **Deep Search**: Tinyfish API
 - **Metadata & Audio Previews**: iTunes Search API
 
+### Design
+The LinkPark logo uses the **OpenSans** font. 
+
 *License: Standard open-source terms.*
