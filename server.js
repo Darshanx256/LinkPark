@@ -12,9 +12,22 @@ let keyIndex = 0;
 // Support multiple comma-separated origins (e.g. "https://site1.com, https://site2.com")
 const ALLOWED_ORIGINS = (process.env.SERVICE || '').split(',').map(s => s.trim()).filter(Boolean);
 
+// Parse IP Allowlist (JSON format with prefixes)
+let ALLOWED_IPS = [];
+try {
+    const list = JSON.parse(process.env.IP_ALLOWLIST || '{}');
+    if (list.prefixes) {
+        ALLOWED_IPS = list.prefixes.map(p => p.ip_prefix.split('/')[0]);
+    }
+} catch (e) {
+    console.error('Failed to parse IP_ALLOWLIST:', e.message);
+}
+
+app.set('trust proxy', true);
+
 app.use(cors({
     origin: (origin, callback) => {
-        // Allow if no origin (like UptimeRobot/Server-to-server) or if it matches our list
+        // Allow if origin is in our whitelist or if it's a non-browser request (no origin)
         if (!origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin)) {
             callback(null, true);
         } else {
@@ -22,6 +35,20 @@ app.use(cors({
         }
     }
 }));
+
+// Global IP Access Middleware (Optional: stricter than CORS)
+app.use((req, res, next) => {
+    // If no allowlist is set, let everything pass (CORS still protects browsers)
+    if (ALLOWED_IPS.length === 0) return next();
+    
+    const clientIp = req.ip;
+    if (ALLOWED_IPS.includes(clientIp)) return next();
+    
+    // Also allow if it's a browser request from a whitelisted origin (already passed CORS)
+    if (req.headers.origin && ALLOWED_ORIGINS.includes(req.headers.origin)) return next();
+
+    res.status(403).json({ error: 'Access denied: IP not allowed' });
+});
 
 // Odesli Proxy Route
 app.get('/api/odesli', async (req, res) => {
