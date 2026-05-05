@@ -23,10 +23,18 @@ let currentData = null; // Stores currently resolved track for sharing
 const SMAP = { s: 'spotify', a: 'appleMusic', y: 'youtubeMusic', z: 'amazonMusic', t: 'tidal', d: 'deezer', p: 'pandora' };
 const SREV = { spotify: 's', appleMusic: 'a', youtubeMusic: 'y', amazonMusic: 'z', tidal: 't', deezer: 'd', pandora: 'p' };
 
+const CDICT = {
+  'https://is1-ssl.mzstatic.com/image/thumb/': '|m|',
+  'https://i.scdn.co/image/': '|s|',
+  'https://audio-ssl.itunes.apple.com/apple-assets-us-std-000001/': '|i|',
+  'https://music.apple.com/song/': '|a|',
+  'https://open.spotify.com/track/': '|p|'
+};
+
 /**
- * Micro-Encoding Logic.
- * Extracts unique platform IDs (e.g. Spotify track ID) and maps keys to single characters
- * to keep the generated share URL as short and portable as possible.
+ * Micro-Encoding Logic v2.
+ * Uses a domain-aware compression dictionary and platform ID extraction 
+ * to create the smallest possible universal share URL.
  */
 function encodeShare(d) {
   const shortLinks = {};
@@ -38,13 +46,29 @@ function encodeShare(d) {
     else if (pid === 'youtubeMusic') val = val.match(/[?&]v=([a-zA-Z0-9_-]+)/)?.[1] || val;
     shortLinks[key] = val;
   }
-  // Store as positional array to avoid property name overhead
-  return btoa(unescape(encodeURIComponent(JSON.stringify([d.t, d.a, d.v, d.p, shortLinks]))));
+
+  // Compress common prefixes in artwork and preview URLs
+  let v = d.v || '', p = d.p || '';
+  for (const prefix in CDICT) {
+    if (v.startsWith(prefix)) v = v.replace(prefix, CDICT[prefix]);
+    if (p.startsWith(prefix)) p = p.replace(prefix, CDICT[prefix]);
+  }
+
+  return btoa(unescape(encodeURIComponent(JSON.stringify([d.t, d.a, v, p, shortLinks]))));
 }
 
 function decodeShare(s) {
   try {
     const a = JSON.parse(decodeURIComponent(escape(atob(s))));
+    let v = a[2] || '', p = a[3] || '';
+    
+    // Decompress prefixes
+    for (const prefix in CDICT) {
+      const marker = CDICT[prefix];
+      if (v.startsWith(marker)) v = v.replace(marker, prefix);
+      if (p.startsWith(marker)) p = p.replace(marker, prefix);
+    }
+
     const links = {};
     const shortLinks = a[4] || {};
     for (const key in shortLinks) {
@@ -57,7 +81,7 @@ function decodeShare(s) {
       }
       links[pid] = val;
     }
-    return { t: a[0], a: a[1], v: a[2], p: a[3], l: links };
+    return { t: a[0], a: a[1], v, p, l: links };
   } catch (e) { return null; }
 }
 /** 
