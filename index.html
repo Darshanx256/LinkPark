@@ -740,7 +740,6 @@
       closeDD(); resolve(it);
     }
 
-    // ── Main resolution ────────────────────────────────────────────────────────
     async function resolve(data) {
       const myId = ++lastResolveId;
       setLoad(true); linksEl.innerHTML = '';
@@ -748,9 +747,33 @@
       try {
         let od, tf = {}, item = data;
 
+        // Helpers to avoid redundant iTunes "torture"
+        const getItunesId = (o) => {
+          const am = o?.linksByPlatform?.appleMusic;
+          if (am?.entityUniqueId) {
+            const ent = o.entitiesByUniqueId[am.entityUniqueId];
+            if (ent?.apiProvider === 'itunes') return ent.id;
+          }
+          return am?.url?.match(/[?&]i=(\d+)/)?.[1];
+        };
+
+        const pullItunes = async (id) => {
+          if (!id || item.previewUrl || myId !== lastResolveId) return;
+          try {
+            const r = await fetch(`https://itunes.apple.com/lookup?id=${id}&entity=song&country=${COUNTRY}`);
+            const d = await r.json();
+            if (d.results?.[0]) {
+              item.previewUrl = d.results[0].previewUrl;
+              item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
+              if (!item.appleUrl) item.appleUrl = d.results[0].trackViewUrl;
+            }
+          } catch (e) { }
+        };
+
         if (typeof data === 'string') {
           od = await fetchOdesli(data);
           if (myId !== lastResolveId) return;
+
           const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
           item = {
             title: ent.title || 'Unknown',
@@ -759,36 +782,14 @@
             previewUrl: null
           };
 
-          let itunesId = null;
-          const am = od?.linksByPlatform?.appleMusic;
-          if (am?.entityUniqueId) {
-            const amEnt = od.entitiesByUniqueId[am.entityUniqueId];
-            if (amEnt && amEnt.apiProvider === 'itunes') itunesId = amEnt.id;
-          }
-          if (!itunesId && am?.url) {
-            const match = am.url.match(/[?&]i=(\d+)/);
-            if (match) itunesId = match[1];
-          }
-
-          const tasks = [];
-          if (itunesId) {
-            tasks.push(fetch(`https://itunes.apple.com/lookup?id=${itunesId}&entity=song&country=${COUNTRY}`)
-              .then(r => r.json())
-              .then(d => {
-                if (d.results?.[0]) {
-                  item.previewUrl = d.results[0].previewUrl;
-                  item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
-                }
-              }).catch(() => { })
-            );
-          }
+          const tasks = [pullItunes(getItunesId(od))];
           if (ent.title) {
             tasks.push(fetchTinyfish(ent.title, ent.artistName).then(res => tf = res).catch(() => { }));
           }
-          if (tasks.length) await Promise.allSettled(tasks);
+          await Promise.allSettled(tasks);
           if (myId !== lastResolveId) return;
 
-          // Deep Upgrade: If results are sparse, re-query Odesli with canonical Spotify link
+          // Deep Upgrade: Re-query Odesli with Spotify link if results are sparse
           let oLinks = od?.linksByPlatform || {};
           const canon = tf.spotify;
           if (canon && canon !== data && (!oLinks.spotify || Object.keys(oLinks).length < 3)) {
@@ -796,40 +797,22 @@
             if (upgrade) {
               od = upgrade;
               if (myId !== lastResolveId) return;
-              oLinks = od.linksByPlatform || {}; // Update reference
-
-              // If upgrade found Apple Music and we still miss preview, fetch it
-              if (!item.previewUrl) {
-                const am = oLinks.appleMusic;
-                let newItId = null;
-                if (am?.entityUniqueId) {
-                  const amEnt = od.entitiesByUniqueId[am.entityUniqueId];
-                  if (amEnt?.apiProvider === 'itunes') newItId = amEnt.id;
-                }
-                if (!newItId && am?.url) newItId = am.url.match(/[?&]i=(\d+)/)?.[1];
-                if (newItId) {
-                  await fetch(`https://itunes.apple.com/lookup?id=${newItId}&entity=song&country=${COUNTRY}`)
-                    .then(r => r.json()).then(d => {
-                      if (d.results?.[0]) {
-                        item.previewUrl = d.results[0].previewUrl;
-                        item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
-                      }
-                    }).catch(() => { });
-                }
-              }
+              // If upgrade found a new Apple link, try to get preview from it
+              await pullItunes(getItunesId(od));
             }
           }
 
-          // Final Fail-safe: If still no preview, search iTunes by keyword
+          // Final Fail-safe: Search iTunes by keyword if still no preview
           if (!item.previewUrl && item.title !== 'Unknown') {
-            await fetch(`https://itunes.apple.com/search?term=${enc(item.title + ' ' + item.artist)}&entity=song&limit=1&country=${COUNTRY}`)
-              .then(r => r.json()).then(d => {
-                if (d.results?.[0]) {
-                  item.previewUrl = d.results[0].previewUrl;
-                  item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
-                  if (!item.appleUrl) item.appleUrl = d.results[0].trackViewUrl;
-                }
-              }).catch(() => { });
+            try {
+              const r = await fetch(`https://itunes.apple.com/search?term=${enc(item.title + ' ' + item.artist)}&entity=song&limit=1&country=${COUNTRY}`);
+              const d = await r.json();
+              if (d.results?.[0]) {
+                item.previewUrl = d.results[0].previewUrl;
+                item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
+                if (!item.appleUrl) item.appleUrl = d.results[0].trackViewUrl;
+              }
+            } catch (e) { }
           }
 
         } else {
@@ -840,6 +823,7 @@
           if (myId !== lastResolveId) return;
           od = odesliData.status === 'fulfilled' ? odesliData.value : null;
           tf = tfData.status === 'fulfilled' ? tfData.value : {};
+          await pullItunes(getItunesId(od)); // Fill preview if missing from search
         }
 
         // Metadata: Prioritize Odesli's clean metadata, but fallback to iTunes/Search data
