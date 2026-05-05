@@ -2,7 +2,6 @@
   <img src="logo.webp" alt="LinkPark Logo" width="250" />
 </p>
 
-# LinkPark
 
 You send a Spotify link to a friend. They reply "I don't have Spotify." You roll your eyes. That's why LinkPark exists. 
 
