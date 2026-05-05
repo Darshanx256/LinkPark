@@ -6,13 +6,23 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Support multiple comma-separated keys (e.g. "key1, key2") for load balancing
+/**
+ * Load balances requests across multiple API keys if provided.
+ * Enables higher rate limits and redundancy by rotating keys in a round-robin fashion.
+ */
 const TFKEYS = (process.env.TFKEY || '').split(',').map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
-// Support multiple comma-separated origins (e.g. "https://site1.com, https://site2.com")
+
+/**
+ * Authorized origins for browser-based CORS requests.
+ * Restricts access to the proxy server to specific frontend deployments (e.g., GitHub Pages).
+ */
 const ALLOWED_ORIGINS = (process.env.SERVICE || '').split(',').map(s => s.trim()).filter(Boolean);
 
-// Parse IP Allowlist (JSON format with prefixes)
+/**
+ * Parses the IP_ALLOWLIST environment variable into a lookup array.
+ * Required for non-browser monitoring services like UptimeRobot which do not send Origin headers.
+ */
 let ALLOWED_IPS = [];
 try {
     const list = JSON.parse(process.env.IP_ALLOWLIST || '{}');
@@ -25,12 +35,22 @@ try {
     console.error('Failed to parse IP_ALLOWLIST:', e.message);
 }
 
+/** 
+ * Configures the application to trust the reverse proxy (Render).
+ * Necessary for accurate client IP identification via req.ip. 
+ */
 app.set('trust proxy', true);
 
-// 1. Health Check (Always accessible, no IP check)
+/** 
+ * Public health check endpoint.
+ * Bypasses IP and CORS middleware to ensure monitoring services can verify server uptime.
+ */
 app.get('/health', (req, res) => res.status(200).send('OK'));
 
-// 2. Logger (Help debug what UptimeRobot is doing)
+/**
+ * Global request logger for production debugging.
+ * Normalizes IPv6-mapped IPv4 addresses to simplify log analysis and IP matching.
+ */
 app.use((req, res, next) => {
     let clientIp = req.ip || '';
     if (clientIp.startsWith('::ffff:')) clientIp = clientIp.replace('::ffff:', '');
@@ -40,7 +60,12 @@ app.use((req, res, next) => {
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Allow if origin is in our whitelist or if it's a non-browser request (no origin)
+        /**
+         * Permissive origin logic:
+         * 1. Allow non-browser requests (no origin).
+         * 2. Allow if SERVICE is unset (standalone dev mode).
+         * 3. Allow if origin matches the whitelist.
+         */
         if (!origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin)) {
             callback(null, true);
         } else {
@@ -49,19 +74,21 @@ app.use(cors({
     }
 }));
 
-// Global IP Access Middleware (Optional: stricter than CORS)
+/**
+ * Secondary security layer for non-browser requests.
+ * Validates the client IP against the ALLOWED_IPS whitelist if configured.
+ */
 app.use((req, res, next) => {
-    // If no allowlist is set, let everything pass (CORS still protects browsers)
     if (ALLOWED_IPS.length === 0) return next();
     
-    // Normalize IP (handle IPv6 mapped IPv4 like ::ffff:1.2.3.4)
     let clientIp = req.ip || '';
     if (clientIp.startsWith('::ffff:')) clientIp = clientIp.replace('::ffff:', '');
     
-    // Allow if whitelisted or if it's a local request
+    /** 
+     * Grant access if the IP is whitelisted, local, or if the request already 
+     * satisfied browser-based CORS requirements via an authorized origin.
+     */
     if (ALLOWED_IPS.includes(clientIp) || clientIp === '127.0.0.1' || clientIp === '::1') return next();
-    
-    // Also allow if it's a browser request from a whitelisted origin (already passed CORS)
     if (req.headers.origin && ALLOWED_ORIGINS.includes(req.headers.origin)) return next();
 
     console.log(`Access denied for IP: ${clientIp}`);
@@ -71,7 +98,10 @@ app.use((req, res, next) => {
     });
 });
 
-// Odesli Proxy Route
+/**
+ * Proxies requests to Odesli (Songlink).
+ * Abstracts regional availability parameters and prevents client-side CORS issues.
+ */
 app.get('/api/odesli', async (req, res) => {
     const { url, userCountry } = req.query;
     if (!url) return res.status(400).json({ error: 'url is required' });
@@ -86,14 +116,17 @@ app.get('/api/odesli', async (req, res) => {
     }
 });
 
-// Tinyfish Proxy Route
+/**
+ * Proxies requests to the Tinyfish search API.
+ * Injects secret API keys server-side to prevent exposure in the browser.
+ * Utilizes round-robin key rotation for load management.
+ */
 app.get('/api/search', async (req, res) => {
     const { query } = req.query;
     
     if (!query) return res.status(400).json({ error: 'Query is required' });
     if (TFKEYS.length === 0) return res.status(500).json({ error: 'Missing API Key' });
 
-    // Round-robin key rotation
     const currentKey = TFKEYS[keyIndex % TFKEYS.length];
     keyIndex++;
 
@@ -108,20 +141,25 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
+/**
+ * Deployment Mode Configuration.
+ * Hybrid Mode: Acts as a proxy only, serving API responses to external frontends.
+ * Standalone Mode: Serves both the API and the static LinkPark frontend.
+ */
 if (ALLOWED_ORIGINS.length > 0) {
-    // Hybrid mode: SERVICE is set, so we're a proxy only
-    // Don't serve any static files — the frontend lives elsewhere
     console.log(`Proxy-only mode. Whitelist: ${ALLOWED_ORIGINS.join(', ')}`);
 } else {
-    // Standalone mode: serve the full frontend too
     app.use(express.static(__dirname));
 
-    // Silence config.js 404 noise (key comes from proxy, not config)
+    /** 
+     * Provides a dummy config.js to suppress browser 404 errors in standalone mode,
+     * as keys are managed by the proxy server environment.
+     */
     app.get('/config.js', (req, res) => {
         res.type('application/javascript').send('// Standalone mode: key handled by proxy');
     });
 
-    // Fallback to index.html for standalone hosting
+    /** Catch-all handler for Single Page Application routing. */
     app.get('*', (req, res) => {
         res.sendFile(path.join(__dirname, 'index.html'));
     });
