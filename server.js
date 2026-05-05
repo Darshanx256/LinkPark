@@ -6,8 +6,9 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// The API Key (Stored safely as an environment variable)
-const TFKEY = process.env.TFKEY;
+// Support multiple comma-separated keys (e.g. "key1, key2") for load balancing
+const TFKEYS = (process.env.TFKEY || '').split(',').map(k => k.trim()).filter(Boolean);
+let keyIndex = 0;
 // Support multiple comma-separated origins (e.g. "https://site1.com, https://site2.com")
 const ALLOWED_ORIGINS = (process.env.SERVICE || '').split(',').map(s => s.trim()).filter(Boolean);
 
@@ -42,11 +43,15 @@ app.get('/api/search', async (req, res) => {
     const { query } = req.query;
     
     if (!query) return res.status(400).json({ error: 'Query is required' });
-    if (!TFKEY) return res.status(500).json({ error: 'Missing API Key' });
+    if (TFKEYS.length === 0) return res.status(500).json({ error: 'Missing API Key' });
+
+    // Round-robin key rotation
+    const currentKey = TFKEYS[keyIndex % TFKEYS.length];
+    keyIndex++;
 
     try {
         const response = await fetch(`https://api.search.tinyfish.ai/?query=${encodeURIComponent(query)}`, {
-            headers: { 'X-API-Key': TFKEY }
+            headers: { 'X-API-Key': currentKey }
         });
         const data = await response.json();
         res.json(data);

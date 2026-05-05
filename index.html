@@ -584,6 +584,8 @@
     const ODESLI_PROXY = PROXY_BASE ? PROXY_BASE + '/api/odesli' : '';
     const COUNTRY = navigator.language.split('-')[1]?.toUpperCase() || 'US';
 
+    let lastResolveId = 0; // Prevent race conditions
+
     // Platform definitions — order = display priority
     // icon: inline SVG path data (viewBox 0 0 24 24)
     const P = [
@@ -740,6 +742,7 @@
 
     // ── Main resolution ────────────────────────────────────────────────────────
     async function resolve(data) {
+      const myId = ++lastResolveId;
       setLoad(true); linksEl.innerHTML = '';
 
       try {
@@ -747,6 +750,7 @@
 
         if (typeof data === 'string') {
           od = await fetchOdesli(data);
+          if (myId !== lastResolveId) return;
           const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
           item = {
             title: ent.title || 'Unknown',
@@ -782,6 +786,7 @@
             tasks.push(fetchTinyfish(ent.title, ent.artistName).then(res => tf = res).catch(() => { }));
           }
           if (tasks.length) await Promise.allSettled(tasks);
+          if (myId !== lastResolveId) return;
 
           // Deep Upgrade: If Odesli returned sparse results for a niche link (like YT Music), 
           // re-query it with a canonical Spotify link if Tinyfish found one. 
@@ -791,6 +796,7 @@
           if (canon && canon !== data && (!oLinks.spotify || Object.keys(oLinks).length < 3)) {
             const upgrade = await fetchOdesli(canon).catch(() => null);
             if (upgrade) od = upgrade;
+            if (myId !== lastResolveId) return;
           }
 
         } else {
@@ -798,6 +804,7 @@
             fetchOdesli(item.appleUrl),
             fetchTinyfish(item.title, item.artist),
           ]);
+          if (myId !== lastResolveId) return;
           od = odesliData.status === 'fulfilled' ? odesliData.value : null;
           tf = tfData.status === 'fulfilled' ? tfData.value : {};
         }
