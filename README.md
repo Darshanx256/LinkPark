@@ -2,14 +2,13 @@
   <img src="logo.webp" alt="LinkPark Logo" width="250" />
 </p>
 
-
 You send a Spotify link to a friend. They reply "I don't have Spotify." You roll your eyes. That's why LinkPark exists. 
 
 LinkPark takes a track, it could be a messy URL you copied from an app or just a few lyrics you vaguely remember, then figures out exactly what song it is. It then spits out clean, tracker-free links for every major streaming platform so you can actually share music without the back-and-forth.
 
 It handles the heavy lifting in the background by juggling the Odesli, Tinyfish, and iTunes APIs simultaneously. It purposely scrubs out those annoying tracking parameters (like `?si=` or `&mt=`) before giving you the final URLs. There's also a native 30-second audio preview player built right in so you know you found the right version.
 
-Whats diffrent here? With all the available APIs (Odesli, Tinyfish and Apple Music) I have made sure it almost always provide links for big 3  (Spotify, Youtube Music and Apple Music) which Odesli often fails to provide! ;D
+What's different here? With all the available APIs (Odesli, Tinyfish, and Apple Music), I have made sure it almost always provides links for the "Big 3" (Spotify, YouTube Music, and Apple Music) which Odesli often fails to provide! ;D
 
 ### How to use it
 
