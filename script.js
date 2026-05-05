@@ -86,48 +86,20 @@ async function decodeShare(s) {
   try {
     const a = pipe.split('|');
     const links = {};
-    
-    // BACKWARD COMPATIBILITY: Detect v7 format (5 fields) vs v8 format (4 fields)
-    if (a.length > 4) {
-      let v = a[2] || '', p = a[3] || '';
-      for (const pre in CDICT) {
-        const m = CDICT[pre];
-        if (v.startsWith(m)) v = v.replace(m, pre);
-        if (p.startsWith(m)) p = p.replace(m, pre);
+    const sl = (a[3] || '').split(',');
+    sl.forEach(pair => {
+      const [k, ...rest] = pair.split(':');
+      const pid = SMAP[k] || k;
+      let val = rest.join(':');
+      if (val && !val.startsWith('http')) {
+        if (pid === 'amazonMusic') val = `https://music.amazon.com/albums/_?trackAsin=${val}`;
+        else if (pid === 'tidal') val = `https://listen.tidal.com/track/${val}`;
+        else if (pid === 'deezer') val = `https://www.deezer.com/track/${val}`;
+        else if (pid === 'pandora') val = `https://www.pandora.com/TR:${val}`;
       }
-      const sl = (a[4] || '').split(',');
-      sl.forEach(pair => {
-        const [k, ...rest] = pair.split(':');
-        const pid = SMAP[k] || k;
-        let val = rest.join(':');
-        if (val && !val.startsWith('http')) {
-          if (pid === 'spotify') val = `https://open.spotify.com/track/${val}`;
-          else if (pid === 'appleMusic') val = `https://music.apple.com/song/${val}`;
-          else if (pid === 'youtubeMusic') val = `https://music.youtube.com/watch?v=${val}`;
-          else if (pid === 'amazonMusic') val = `https://music.amazon.com/albums/_?trackAsin=${val}`;
-          else if (pid === 'tidal') val = `https://listen.tidal.com/track/${val}`;
-          else if (pid === 'deezer') val = `https://www.deezer.com/track/${val}`;
-          else if (pid === 'pandora') val = `https://www.pandora.com/TR:${val}`;
-        }
-        if (pid && val) links[pid] = val;
-      });
-      return { t: a[0], a: a[1], v, p, l: links };
-    } else {
-      const sl = (a[3] || '').split(',');
-      sl.forEach(pair => {
-        const [k, ...rest] = pair.split(':');
-        const pid = SMAP[k] || k;
-        let val = rest.join(':');
-        if (val && !val.startsWith('http')) {
-          if (pid === 'amazonMusic') val = `https://music.amazon.com/albums/_?trackAsin=${val}`;
-          else if (pid === 'tidal') val = `https://listen.tidal.com/track/${val}`;
-          else if (pid === 'deezer') val = `https://www.deezer.com/track/${val}`;
-          else if (pid === 'pandora') val = `https://www.pandora.com/TR:${val}`;
-        }
-        if (pid && val) links[pid] = val;
-      });
-      return { t: a[0], a: a[1], itunesId: a[2], l: links };
-    }
+      if (pid && val) links[pid] = val;
+    });
+    return { t: a[0], a: a[1], itunesId: a[2], l: links };
   } catch (e) { return null; }
 }
 /** 
