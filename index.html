@@ -576,7 +576,7 @@
     // PROXY: Set this to your proxy URL (e.g. 'https://my-proxy.com/api/search') 
     // to hide your API key. Set to '/api/search' if hosting standalone on one server.
     // Leave empty to use direct API (requires secret injection or config.js).
-    const PROXY = ''; 
+    const PROXY = 'https://linkpark.onrender.com/api/search'; 
     const TFKEY = window.LINKPARK_CONFIG?.TFKEY || 'YOUR_TINYFISH_API_KEY_HERE';
     // Derive both API endpoints from PROXY base (strip trailing /api/search if present)
     const PROXY_BASE = PROXY ? PROXY.replace(/\/api\/search$/, '') : '';

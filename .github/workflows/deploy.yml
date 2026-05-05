@@ -29,12 +29,12 @@ jobs:
           TFKEY: ${{ secrets.TFKEY }}
         run: |
           if [ -z "$TFKEY" ]; then
-            echo "Error: TFKEY secret is empty! Please add it to your repository secrets."
-            exit 1
+            echo "Warning: TFKEY secret not set. Skipping injection (proxy mode assumed)."
+          else
+            # Replaces the placeholder in the code with the actual secret
+            # Using | as delimiter in case the key contains /
+            sed -i "s|YOUR_TINYFISH_API_KEY_HERE|$TFKEY|g" index.html
           fi
-          # Replaces the placeholder in the code with the actual secret
-          # Using | as delimiter in case the key contains /
-          sed -i "s|YOUR_TINYFISH_API_KEY_HERE|$TFKEY|g" index.html
           
       - name: Setup Pages
         uses: actions/configure-pages@v5
