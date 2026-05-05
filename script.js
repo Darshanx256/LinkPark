@@ -206,11 +206,7 @@ window.addEventListener('load', async () => {
     const data = await decodeShare(s);
     if (data) {
       setLoad(true);
-      // Immediate view: Title and Artist show up first
-      document.getElementById('ctitle').textContent = data.t;
-      document.getElementById('cartist').textContent = data.a;
-      cardEl.style.display = 'block';
-
+      
       // Background Resolution: Get high-res assets and links
       const myId = ++lastResolveId;
       try {
@@ -239,8 +235,15 @@ window.addEventListener('load', async () => {
         if (tf.youtubeMusic) merged.youtubeMusic = tf.youtubeMusic;
         if (appleUrl) merged.appleMusic = appleUrl;
 
+        // Only show everything once resolution is 100% complete
         populateUI(data.t, data.a, art, preview, merged);
-      } catch (e) { console.error('Hybrid resolve failed', e); }
+        cardEl.style.display = 'block';
+      } catch (e) { 
+        console.error('Hybrid resolve failed', e);
+        // Fallback: at least show what we have if APIs fail
+        populateUI(data.t, data.a, '', '', data.l);
+        cardEl.style.display = 'block';
+      }
       setLoad(false);
     }
   }
