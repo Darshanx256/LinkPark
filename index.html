@@ -825,7 +825,11 @@
         // Tinyfish fallbacks
         if (!links.spotify && tf.spotify) links.spotify = tf.spotify;
         if (!links.youtubeMusic && tf.youtubeMusic) links.youtubeMusic = tf.youtubeMusic;
-        if (!links.appleMusic && typeof data !== 'string') links.appleMusic = item.appleUrl; // always guaranteed if from search
+        // Apple Music fallback: use item.appleUrl from search, or the original dropped URL if it was an Apple Music link
+        if (!links.appleMusic) {
+          if (typeof data !== 'string') links.appleMusic = item.appleUrl;
+          else if (typeof data === 'string' && data.includes('music.apple.com')) links.appleMusic = data;
+        }
 
         // Render rows
         let found = 0;
@@ -878,10 +882,12 @@
       const headers = PROXY ? {} : { 'X-API-Key': TFKEY };
       const out = {};
 
+      // Only include artist if it's known — 'Unknown' poisons search results on niche tracks
+      const knownArtist = artist && artist !== 'Unknown' ? artist + ' ' : '';
       try {
         const [spRes, ytRes] = await Promise.allSettled([
-          fetch(`${TFAPI}?query=${enc(title + ' ' + artist + ' spotify track')}`, { headers }).then(r => r.ok ? r.json() : null),
-          fetch(`${TFAPI}?query=${enc(title + ' ' + artist + ' youtube music')}`, { headers }).then(r => r.ok ? r.json() : null)
+          fetch(`${TFAPI}?query=${enc(title + ' ' + knownArtist + 'spotify track')}`, { headers }).then(r => r.ok ? r.json() : null),
+          fetch(`${TFAPI}?query=${enc(title + ' ' + knownArtist + 'youtube music')}`, { headers }).then(r => r.ok ? r.json() : null)
         ]);
 
         if (spRes.status === 'fulfilled' && spRes.value?.results) {
