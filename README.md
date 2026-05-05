@@ -14,7 +14,7 @@ What's different here? With all the available APIs (Odesli, Tinyfish, and Apple 
 
 ### Deployment & Local Setup
 
-LinkPark is flexible. You can run it in three different ways depending on how much you care about API key security and "pain":
+LinkPark is flexible. You can run it in three different ways depending on how much you care about API key security and pain:
 
 #### 1. The Standalone Server (Recommended for zero-effort hosting)
 If you want to host everything in one place (like on Render, Vercel, or a VPS), just point your hosting service to this repository.
@@ -32,7 +32,7 @@ You can keep the frontend on GitHub Pages and host the proxy elsewhere.
   - Set `PROXY = 'https://your-proxy-url.com/api/search'` in `index.html` and push.
 - This is great if you want to keep the "static" feel of GitHub Pages but still want a secure key.
 
-#### 3. I want pain (Local Development)
+#### 3. Least pain (Local Development)
 Perfect for testing things out on your machine without setting up a server.
 - **Setup**:
   - Clone the folder.
