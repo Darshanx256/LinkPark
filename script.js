@@ -452,11 +452,11 @@ async function fetchOdesli(url) {
   }
 
   /** 
-   * Fallback: Queries Odesli via corsproxy.io. 
+   * Fallback: Queries Odesli via AllOrigins. 
    * Used as a fail-safe if the Node.js proxy IP is rate-limited or blocked by Odesli.
    */
   const target = `${ODESLI}?url=${enc(url)}&userCountry=${COUNTRY}`;
-  const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(target)}`);
+  const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`);
   if (!r.ok) throw new Error(`odesli ${r.status}`);
   return r.json();
 }

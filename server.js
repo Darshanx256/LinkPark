@@ -114,7 +114,7 @@ app.get('/api/odesli', async (req, res) => {
      */
     const strategies = [
         async () => await fetch(target),
-        async () => await fetch(`https://corsproxy.io/?${encodeURIComponent(target)}`),
+        async () => await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`),
         async () => {
             const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(target)}`);
             if (!r.ok) return r;
