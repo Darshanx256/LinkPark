@@ -689,24 +689,32 @@ async function fetchTinyfish(title, artist, album = '') {
     }
 
     if (ytRes.status === 'fulfilled' && ytRes.value?.results) {
-      const results = ytRes.value.results;
-      
-      // Pass 1: Prioritize native music.youtube.com links (exclude playlists)
-      for (const r of results) {
-        if (r.url.includes('music.youtube.com/watch') && !r.url.includes('list=')) {
-          out.youtubeMusic = r.url;
-          break;
-        }
-      }
+      let bestUrl = null;
+      let maxScore = -1;
 
-      // Pass 2: Fallback to youtube.com video links if no music link found
-      if (!out.youtubeMusic) {
-        for (const r of results) {
-          if (r.url.includes('youtube.com/watch') && !r.url.includes('list=')) {
-            out.youtubeMusic = r.url.replace('www.youtube.com', 'music.youtube.com');
-            break;
-          }
+      ytRes.value.results.forEach((r, i) => {
+        if (!r.url.includes('watch') || r.url.includes('list=')) return;
+
+        // Base score starts with rank (higher rank = higher base)
+        let score = 20 - i; 
+        
+        // Massive boost for native music domain
+        if (r.url.includes('music.youtube.com')) score += 30;
+
+        // Boost for clean title matches (ignores "Official Video" fluff)
+        const rTitle = r.title.toLowerCase().trim();
+        const tTitle = title.toLowerCase().trim();
+        if (rTitle === tTitle) score += 40;
+        else if (rTitle.includes(tTitle)) score += 10;
+
+        if (score > maxScore) {
+          maxScore = score;
+          bestUrl = r.url;
         }
+      });
+
+      if (bestUrl) {
+        out.youtubeMusic = bestUrl.replace('www.youtube.com', 'music.youtube.com');
       }
     }
   } catch (e) {
