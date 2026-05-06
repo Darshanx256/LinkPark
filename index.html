@@ -4,6 +4,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="LinkPark resolves any music link — Spotify, Apple Music, YouTube — into clean, tracker-free links for every major streaming platform. Share music with anyone.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0a0a0f">
+
+  <!-- Open Graph / Social Previews -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://darshanx256.github.io/LinkPark/">
+  <meta property="og:title" content="LinkPark — Music Link Resolver">
+  <meta property="og:description" content="Paste any streaming link or search a song. Get clean links for every platform instantly.">
+  <meta property="og:image" content="https://darshanx256.github.io/LinkPark/assets/logo.webp">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="LinkPark — Music Link Resolver">
+  <meta name="twitter:description" content="Paste any streaming link or search a song. Get clean links for every platform instantly.">
+  <meta name="twitter:image" content="https://darshanx256.github.io/LinkPark/assets/logo.webp">
+
+  <link rel="canonical" href="https://darshanx256.github.io/LinkPark/">
   <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
   <title>LinkPark — Music Link Resolver</title>
   <link rel="preconnect" href="https://api.song.link">
@@ -18,50 +34,52 @@
   <div class="wrap">
 
     <header>
-      <div class="logo"></div>
+      <div class="logo" role="img" aria-label="LinkPark logo — click to go home" tabindex="0"></div>
       <p>Find any song on every platform</p>
     </header>
 
-    <form class="search-wrap" id="searchForm">
-      <input class="search-input" id="q" type="search" placeholder="Search a song…" autocomplete="off"
-        spellcheck="false">
-      <button type="submit" style="display:none"></button>
-      <div class="dropdown" id="dd"></div>
-    </form>
+    <main>
+      <form class="search-wrap" id="searchForm" role="search">
+        <input class="search-input" id="q" type="search" placeholder="Search a song…" autocomplete="off"
+          spellcheck="false" aria-label="Search for a song by name, artist, or paste a link">
+        <button type="submit" aria-hidden="true" style="display:none"></button>
+        <div class="dropdown" id="dd" role="listbox" aria-label="Search suggestions"></div>
+      </form>
 
-    <p class="hint" id="hint">↑ ↓ navigate &nbsp;·&nbsp; Enter select &nbsp;·&nbsp; Esc close</p>
-    <div class="loader" id="loader"><span></span><span></span><span></span></div>
-    <div class="error" id="err"></div>
+      <p class="hint" id="hint" aria-live="polite">↑ ↓ navigate &nbsp;·&nbsp; Enter select &nbsp;·&nbsp; Esc close</p>
+      <div class="loader" id="loader" role="status" aria-label="Resolving links…"><span></span><span></span><span></span></div>
+      <div class="error" id="err" role="alert"></div>
 
-    <div class="card" id="card">
-      <div class="card-meta">
-        <img class="card-art" id="art" src="" alt="">
-        <div class="card-info">
-          <div class="card-title" id="ctitle"></div>
-          <div class="card-artist" id="cartist"></div>
-          <div class="player-wrap" id="playerWrap" style="display:none">
-            <button class="play-btn" id="playBtn" aria-label="Play preview">
-              <svg viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </button>
-            <div class="seek-wrap" id="seekWrap">
-              <div class="seek-bar">
-                <div class="seek-fill" id="seekFill"></div>
+      <div class="card" id="card" aria-live="polite">
+        <div class="card-meta">
+          <img class="card-art" id="art" src="" alt="">
+          <div class="card-info">
+            <div class="card-title" id="ctitle"></div>
+            <div class="card-artist" id="cartist"></div>
+            <div class="player-wrap" id="playerWrap" style="display:none">
+              <button class="play-btn" id="playBtn" aria-label="Play preview">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </button>
+              <div class="seek-wrap" id="seekWrap" role="slider" aria-label="Audio progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="seek-bar">
+                  <div class="seek-fill" id="seekFill"></div>
+                </div>
               </div>
+              <div class="time-label" id="timeLabel" aria-live="off">0:00</div>
             </div>
-            <div class="time-label" id="timeLabel">0:00</div>
           </div>
         </div>
+        <div class="links" id="links" role="list" aria-label="Streaming platform links"></div>
+        <div class="card-footer">
+          <button id="shareCardBtn" class="share-card-btn" title="Share this music card" aria-label="Copy shareable link to this music card">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+            Share Music Card
+          </button>
+        </div>
       </div>
-      <div class="links" id="links"></div>
-      <div class="card-footer">
-        <button id="shareCardBtn" class="share-card-btn" title="Share this card">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
-          Share Music Card
-        </button>
-      </div>
-    </div>
+    </main>
 
   </div>
 

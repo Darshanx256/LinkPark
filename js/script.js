@@ -352,7 +352,7 @@ function renderDD(tracks) {
   
   ddEl.innerHTML = items.map((it, i) => `
     <div class="dd-item" data-i="${i}">
-      <img src="${it.thumb}" loading="lazy" alt="">
+      <img src="${it.thumb}" loading="lazy" alt="${esc(it.title)} by ${esc(it.artist)}">
       <div style="min-width:0">
         <div class="dd-title">${esc(it.title)}</div>
         <div class="dd-artist">${esc(it.artist)}</div>
@@ -593,7 +593,9 @@ async function resolve(data) {
  * Shared between the main resolution pipeline and the instant-load share decoder.
  */
 function populateUI(title, artist, art, preview, links) {
-  document.getElementById('art').src = art || '';
+  const artEl = document.getElementById('art');
+  artEl.src = art || '';
+  artEl.alt = art ? `${title} — ${artist} album artwork` : '';
   document.getElementById('ctitle').textContent = title;
   document.getElementById('cartist').textContent = artist;
 
