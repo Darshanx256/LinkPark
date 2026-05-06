@@ -23,15 +23,6 @@ let currentData = null; // Stores currently resolved track for sharing
 const SMAP = { s: 'spotify', a: 'appleMusic', y: 'youtubeMusic', z: 'amazonMusic', t: 'tidal', d: 'deezer', p: 'pandora' };
 const SREV = { spotify: 's', appleMusic: 'a', youtubeMusic: 'y', amazonMusic: 'z', tidal: 't', deezer: 'd', pandora: 'p' };
 
-const CDICT = {
-  'https://is1-ssl.mzstatic.com/image/thumb/': '|m|',
-  'https://i.scdn.co/image/': '|s|',
-  'https://audio-ssl.itunes.apple.com/apple-assets-us-std-000001/': '|i|',
-  'https://audio-ssl.itunes.apple.com/itunes-assets/': '|a|',
-  'https://music.apple.com/song/': '|o|',
-  'https://open.spotify.com/track/': '|p|'
-};
-
 /**
  * Advanced Compression & Encoding Engine.
  * Uses browser-native CompressionStream (Deflate) and URL-safe Base64 
@@ -577,11 +568,13 @@ async function resolve(data) {
     populateUI(finalTitle, finalArtist, item.art, item.previewUrl, links);
     cardEl.style.display = 'block';
 
-    // Sync URL state without reload
-    const hash = await encodeShare(currentData);
-    const url = new URL(window.location.href);
-    url.searchParams.set('s', hash);
-    window.history.replaceState({}, '', url);
+    // Sync URL state without reload (safety check for race conditions)
+    if (myId === lastResolveId) {
+      const hash = await encodeShare(currentData);
+      const url = new URL(window.location.href);
+      url.searchParams.set('s', hash);
+      window.history.replaceState({}, '', url);
+    }
 
   } catch (e) {
     if (e.message === 'NoStreamingLinks') {
