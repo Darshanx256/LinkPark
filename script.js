@@ -212,7 +212,8 @@ window.addEventListener('load', async () => {
       try {
         let art = '', preview = '', appleUrl = '';
         
-        // 1. Fetch iTunes info (cheap, covers art, preview, apple link)
+        // 1. Fetch iTunes info (cheap, covers art, preview, apple link, album)
+        let album = '';
         if (data.itunesId) {
           const r = await fetch(`https://itunes.apple.com/lookup?id=${data.itunesId}&country=${COUNTRY}`);
           const d = await r.json();
@@ -221,11 +222,12 @@ window.addEventListener('load', async () => {
             art = track.artworkUrl100.replace('100x100bb', '600x600bb');
             preview = track.previewUrl;
             appleUrl = track.trackViewUrl;
+            album = track.collectionName || '';
           }
         }
 
         // 2. Fetch Tinyfish (cheap, covers spotify, youtube)
-        const tf = await fetchTinyfish(data.t, data.a).catch(() => ({}));
+        const tf = await fetchTinyfish(data.t, data.a, album).catch(() => ({}));
         
         if (myId !== lastResolveId) return;
 
@@ -328,6 +330,7 @@ function renderDD(tracks) {
     art: (t.artworkUrl100 || t.artworkUrl60).replace('100x100bb', '600x600bb'),
     thumb: t.artworkUrl60,
     previewUrl: t.previewUrl,
+    album: t.collectionName || '',
   }));
   
   ddEl.innerHTML = items.map((it, i) => `
@@ -452,7 +455,7 @@ async function resolve(data) {
 
       const tasks = [pullItunes(getItunesId(od))];
       if (ent.title) {
-        tasks.push(fetchTinyfish(ent.title, ent.artistName).then(res => tf = res).catch(() => { }));
+        tasks.push(fetchTinyfish(ent.title, ent.artistName, ent.albumName).then(res => tf = res).catch(() => { }));
       }
       await Promise.allSettled(tasks);
       if (myId !== lastResolveId) return;
@@ -493,7 +496,7 @@ async function resolve(data) {
     } else {
       const [odesliData, tfData] = await Promise.allSettled([
         fetchOdesli(item.appleUrl),
-        fetchTinyfish(item.title, item.artist),
+        fetchTinyfish(item.title, item.artist, item.album),
       ]);
       if (myId !== lastResolveId) return;
       od = odesliData.status === 'fulfilled' ? odesliData.value : null;
@@ -623,20 +626,23 @@ async function fetchOdesli(url) {
 /**
  * Searches for streaming links on Tinyfish.
  * Dispatches parallel requests for Spotify and YouTube Music.
+ * Uses a priority loop for YouTube Music to favor native tracks over video fallback.
  * @param {string} title - Song title.
  * @param {string} artist - Artist name.
+ * @param {string} album - Optional album name for better query targeting.
  */
-async function fetchTinyfish(title, artist) {
+async function fetchTinyfish(title, artist, album = '') {
   const headers = PROXY ? {} : { 'X-API-Key': TFKEY };
   const out = {};
 
   const knownArtist = (artist && artist !== 'Unknown') ? artist : '';
   const qBase = title + (knownArtist ? ' ' + knownArtist : '');
+  const qYt = qBase + (album ? ' ' + album : '') + ' youtube music topic';
   
   try {
     const [spRes, ytRes] = await Promise.allSettled([
       fetch(`${TFAPI}?query=${enc(qBase + ' spotify track')}`, { headers }).then(r => r.ok ? r.json() : null),
-      fetch(`${TFAPI}?query=${enc(qBase + ' youtube music')}`, { headers }).then(r => r.ok ? r.json() : null)
+      fetch(`${TFAPI}?query=${enc(qYt)}`, { headers }).then(r => r.ok ? r.json() : null)
     ]);
 
     if (spRes.status === 'fulfilled' && spRes.value?.results) {
@@ -648,12 +654,23 @@ async function fetchTinyfish(title, artist) {
     }
 
     if (ytRes.status === 'fulfilled' && ytRes.value?.results) {
-      for (const r of ytRes.value.results) {
+      const results = ytRes.value.results;
+      
+      // Pass 1: Prioritize native music.youtube.com links
+      for (const r of results) {
         if (r.url.includes('music.youtube.com/watch')) {
-          out.youtubeMusic = r.url; break;
+          out.youtubeMusic = r.url;
+          break;
         }
-        if (r.url.includes('youtube.com/watch') && !r.url.includes('list=')) {
-          out.youtubeMusic = r.url.replace('www.youtube.com', 'music.youtube.com'); break;
+      }
+
+      // Pass 2: Fallback to youtube.com video links if no music link found
+      if (!out.youtubeMusic) {
+        for (const r of results) {
+          if (r.url.includes('youtube.com/watch') && !r.url.includes('list=')) {
+            out.youtubeMusic = r.url.replace('www.youtube.com', 'music.youtube.com');
+            break;
+          }
         }
       }
     }
