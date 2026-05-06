@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.webp" alt="LinkPark Logo" width="250" />
+  <img src="assets/logo.webp" alt="LinkPark Logo" width="250" />
 </p>
 
 You send a Spotify link to a friend. They reply "I don't have Spotify." You roll your eyes. That's why LinkPark exists. 

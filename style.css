@@ -421,7 +421,16 @@ header p {
   }
 
   .logo {
-    width: 180px;
+    width: 170px;
+  }
+
+  header {
+    margin-bottom: 2rem;
+  }
+
+  header p {
+    margin-top: 0.6rem;
+    font-size: 0.78rem;
   }
 
   .card-meta {
