@@ -599,7 +599,7 @@ function populateUI(title, artist, art, preview, links) {
   document.getElementById('ctitle').textContent = title;
   const artistEl = document.getElementById('cartist');
   artistEl.textContent = artist;
-  artistEl.classList.toggle('lp-easter', artist.trim().toLowerCase() === 'linkin park');
+  artistEl.classList.toggle('lp-easter', artist.trim().toLowerCase().includes('linkin park'));
 
   const pWrap = document.getElementById('playerWrap');
   if (preview) {
