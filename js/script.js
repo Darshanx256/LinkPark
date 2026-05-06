@@ -597,7 +597,9 @@ function populateUI(title, artist, art, preview, links) {
   artEl.src = art || '';
   artEl.alt = art ? `${title} — ${artist} album artwork` : '';
   document.getElementById('ctitle').textContent = title;
-  document.getElementById('cartist').textContent = artist;
+  const artistEl = document.getElementById('cartist');
+  artistEl.textContent = artist;
+  artistEl.classList.toggle('lp-easter', artist.trim().toLowerCase() === 'linkin park');
 
   const pWrap = document.getElementById('playerWrap');
   if (preview) {
