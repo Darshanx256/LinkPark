@@ -656,9 +656,9 @@ async function fetchTinyfish(title, artist, album = '') {
     if (ytRes.status === 'fulfilled' && ytRes.value?.results) {
       const results = ytRes.value.results;
       
-      // Pass 1: Prioritize native music.youtube.com links
+      // Pass 1: Prioritize native music.youtube.com links (exclude playlists)
       for (const r of results) {
-        if (r.url.includes('music.youtube.com/watch')) {
+        if (r.url.includes('music.youtube.com/watch') && !r.url.includes('list=')) {
           out.youtubeMusic = r.url;
           break;
         }
