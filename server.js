@@ -17,9 +17,13 @@ const TFKEYS = (process.env.TFKEY || '')
   .filter(Boolean)
   .slice(0, 9);
 
-/** Returns a cryptographically-random key index each call. */
-function pickKey() {
-  return Math.floor(Math.random() * TFKEYS.length);
+/**
+ * Returns a shuffled copy of the key indices array.
+ * Guarantees each key is tried exactly once per request, in a random order.
+ */
+function shuffleKeys() {
+  return Array.from({ length: TFKEYS.length }, (_, i) => i)
+    .sort(() => Math.random() - 0.5);
 }
 
 /**
@@ -47,6 +51,19 @@ function cacheSet(key, data) {
   }
   cache.set(key, { data, expires: Date.now() + CACHE_TTL });
 }
+
+/**
+ * Periodic sweep: removes all expired entries every 6 hours.
+ * Prevents stale entries from accumulating when they are never re-requested.
+ */
+setInterval(() => {
+  const now = Date.now();
+  let swept = 0;
+  for (const [key, entry] of cache.entries()) {
+    if (now > entry.expires) { cache.delete(key); swept++; }
+  }
+  if (swept) console.log(`[cache sweep] removed ${swept} expired entries, ${cache.size} remaining`);
+}, 6 * 60 * 60 * 1000).unref(); // .unref() so the timer never blocks process exit
 
 /**
  * Authorized origins for browser-based CORS requests.
@@ -177,18 +194,12 @@ app.get('/api/search', async (req, res) => {
     return res.json(cached);
   }
 
-  // Attempt with up to min(keyCount, 9) unique random keys before giving up
-  const tried = new Set();
-  const maxAttempts = Math.min(TFKEYS.length, 9);
+  // Shuffle key indices once — guaranteed unique order, no retry collisions
+  const keyOrder = shuffleKeys();
+  const maxAttempts = Math.min(keyOrder.length, 9);
 
   for (let i = 0; i < maxAttempts; i++) {
-    // Pick a random key we haven't tried yet this request
-    let keyIdx = pickKey();
-    let safety = 0;
-    while (tried.has(keyIdx) && safety++ < 20) keyIdx = pickKey();
-    tried.add(keyIdx);
-
-    const currentKey = TFKEYS[keyIdx];
+    const currentKey = TFKEYS[keyOrder[i]];
     try {
       const response = await fetch(
         `https://api.search.tinyfish.ai/?query=${encodeURIComponent(query)}`,
@@ -199,9 +210,9 @@ app.get('/api/search', async (req, res) => {
         cacheSet(cacheKey, data);
         return res.json(data);
       }
-      console.warn(`Tinyfish attempt ${i + 1} (key #${keyIdx}) failed: ${response.status}`);
+      console.warn(`Tinyfish attempt ${i + 1} (key #${keyOrder[i]}) failed: ${response.status}`);
     } catch (error) {
-      console.warn(`Tinyfish attempt ${i + 1} (key #${keyIdx}) errored:`, error.message);
+      console.warn(`Tinyfish attempt ${i + 1} (key #${keyOrder[i]}) errored:`, error.message);
     }
   }
 
