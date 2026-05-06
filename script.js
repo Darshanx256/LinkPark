@@ -287,7 +287,14 @@ qEl.addEventListener('input', () => {
   closeDD(); 
   errEl.style.display = 'none';
   
-  if (v.length < 2) return;
+  if (v.length < 2) {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('s')) {
+      url.searchParams.delete('s');
+      window.history.replaceState({}, '', url);
+    }
+    return;
+  }
 
   /**
    * Identifies if input is a streaming URL or Spotify URI.
@@ -546,6 +553,12 @@ async function resolve(data) {
     currentData = { t: finalTitle, a: finalArtist, v: item.art, p: item.previewUrl, l: links };
     populateUI(finalTitle, finalArtist, item.art, item.previewUrl, links);
     cardEl.style.display = 'block';
+
+    // Sync URL state without reload
+    const hash = await encodeShare(currentData);
+    const url = new URL(window.location.href);
+    url.searchParams.set('s', hash);
+    window.history.replaceState({}, '', url);
 
   } catch (e) {
     if (e.message === 'NoStreamingLinks') {
