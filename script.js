@@ -304,6 +304,7 @@ qEl.addEventListener('input', () => {
   const v = qEl.value.trim();
   closeDD(); 
   errEl.style.display = 'none';
+  cardEl.style.display = 'none'; // Instant card drop on new input
   
   if (v.length < 2) {
     const url = new URL(window.location.href);
@@ -693,7 +694,9 @@ async function fetchTinyfish(title, artist, album = '') {
       let maxScore = -1;
 
       ytRes.value.results.forEach((r, i) => {
-        if (!r.url.includes('watch') || r.url.includes('list=')) return;
+        // Strict domain and track filter (removes playlists and 'site embeds')
+        const isYt = r.url.includes('youtube.com/watch') || r.url.includes('music.youtube.com/watch');
+        if (!isYt || r.url.includes('list=')) return;
 
         // Base score starts with rank (higher rank = higher base)
         let score = 20 - i; 
@@ -704,8 +707,13 @@ async function fetchTinyfish(title, artist, album = '') {
         // Boost for clean title matches (ignores "Official Video" fluff)
         const rTitle = r.title.toLowerCase().trim();
         const tTitle = title.toLowerCase().trim();
+        
         if (rTitle === tTitle) score += 40;
         else if (rTitle.includes(tTitle)) score += 10;
+
+        // Cleanliness Bonus: Topic tracks usually have shorter, cleaner titles
+        const lengthDiff = Math.abs(r.title.length - title.length);
+        if (lengthDiff < 5) score += 20;
 
         if (score > maxScore) {
           maxScore = score;
