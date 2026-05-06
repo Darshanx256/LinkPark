@@ -144,6 +144,22 @@ const loaderEl = document.getElementById('loader');
 const errEl = document.getElementById('err');
 const cardEl = document.getElementById('card');
 const linksEl = document.getElementById('links');
+const logoEl = document.querySelector('.logo');
+
+/** 
+ * Logo 'Home' functionality: Clears search, resets state, and cleans URL.
+ */
+logoEl.addEventListener('click', () => {
+  qEl.value = '';
+  closeDD();
+  cardEl.style.display = 'none';
+  errEl.style.display = 'none';
+  currentData = null;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('s');
+  window.history.replaceState({}, '', url);
+  audio.pause();
+});
 
 /** 
  * UI state variables.
@@ -539,7 +555,11 @@ async function resolve(data) {
     });
 
     if (!links.spotify && tf.spotify) links.spotify = tf.spotify;
-    if (!links.youtubeMusic && tf.youtubeMusic) links.youtubeMusic = tf.youtubeMusic;
+    
+    // Always prefer Tinyfish for YouTube Music if it found a native link
+    if (tf.youtubeMusic) {
+      links.youtubeMusic = tf.youtubeMusic;
+    }
     
     if (!links.appleMusic) {
       if (item.appleUrl) links.appleMusic = item.appleUrl;
