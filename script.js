@@ -149,17 +149,19 @@ const logoEl = document.querySelector('.logo');
 /** 
  * Logo 'Home' functionality: Clears search, resets state, and cleans URL.
  */
-logoEl.addEventListener('click', () => {
-  qEl.value = '';
-  closeDD();
-  cardEl.style.display = 'none';
-  errEl.style.display = 'none';
-  currentData = null;
-  const url = new URL(window.location.href);
-  url.searchParams.delete('s');
-  window.history.replaceState({}, '', url);
-  audio.pause();
-});
+if (logoEl) {
+  logoEl.addEventListener('click', () => {
+    qEl.value = '';
+    closeDD();
+    cardEl.style.display = 'none';
+    errEl.style.display = 'none';
+    currentData = null;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('s');
+    window.history.replaceState({}, '', url);
+    audio.pause();
+  });
+}
 
 /** 
  * UI state variables.
