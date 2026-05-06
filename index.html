@@ -60,20 +60,67 @@
       max-width: 480px;
     }
 
+    /* Synced initial values for a seamless start */
+    @property --pink-x { syntax: '<percentage>'; inherits: false; initial-value: 80%; }
+    @property --pink-y { syntax: '<percentage>'; inherits: false; initial-value: 22%; }
+    @property --blue-x { syntax: '<percentage>'; inherits: false; initial-value: 18%; }
+    @property --blue-y { syntax: '<percentage>'; inherits: false; initial-value: 82%; }
+
     header {
       text-align: center;
       margin-bottom: 2.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
 
-    header img {
+    .logo {
       width: 200px;
-      margin: 0 auto;
-      display: block;
+      height: 60px;
+      position: relative;
       cursor: pointer;
+      background-color: #ffffff; 
+      
+      background-image: 
+          radial-gradient(circle at var(--pink-x) var(--pink-y), rgba(255, 184, 242, 0.9) 0%, rgba(255, 184, 242, 0) 40%),
+          radial-gradient(circle at var(--blue-x) var(--blue-y), rgba(96, 80, 255, 0.9) 0%, rgba(96, 80, 255, 0) 50%);
+      
+      -webkit-mask-image: url('logo_base.webp');
+      -webkit-mask-size: contain;
+      -webkit-mask-position: center;
+      -webkit-mask-repeat: no-repeat;
+      
+      mask-image: url('logo_base.webp');
+      mask-size: contain;
+      mask-position: center;
+      mask-repeat: no-repeat;
+
+      animation: breatheHues 10s infinite ease-in-out alternate;
+    }
+
+    .logo::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+      opacity: 0.15; 
+      mix-blend-mode: multiply; 
+      pointer-events: none;
+    }
+
+    @keyframes breatheHues {
+      0% {
+          --pink-x: 80%; --pink-y: 22%;
+          --blue-x: 18%; --blue-y: 82%;
+      }
+      100% {
+          --pink-x: 68%; --pink-y: 38%;
+          --blue-x: 32%; --blue-y: 68%;
+      }
     }
 
     header p {
-      margin-top: 0.5rem;
+      margin-top: 0.8rem;
       font-size: 0.82rem;
       color: var(--muted);
       letter-spacing: 0.02em;
@@ -562,7 +609,7 @@
   <div class="wrap">
 
     <header>
-      <img src="logo.webp" alt="LinkPark Logo" class="logo">
+      <div class="logo"></div>
       <p>Find any song on every platform</p>
     </header>
 
