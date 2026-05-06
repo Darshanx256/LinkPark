@@ -570,6 +570,10 @@ header p {
     gap: 0.85rem;
   }
 
+  .card {
+    margin-top: 2rem;
+  }
+
   .card-art {
     width: 64px;
     height: 64px;
