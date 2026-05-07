@@ -382,8 +382,8 @@ function renderDD(tracks) {
   }));
 
   ddEl.innerHTML = items.map((it, i) => `
-    <div class="dd-item" data-i="${i}">
-      <img src="${it.thumb}" loading="lazy" alt="${esc(it.title)} by ${esc(it.artist)}">
+    <div class="dd-item" data-i="${i}" role="option">
+      <img src="${it.thumb}" loading="lazy" onerror="this.onerror=null;this.src='assets/logo.webp';" alt="${esc(it.title)} by ${esc(it.artist)}">
       <div style="min-width:0">
         <div class="dd-title">${esc(it.title)}</div>
         <div class="dd-artist">${esc(it.artist)}</div>
@@ -542,27 +542,28 @@ async function resolve(data) {
       }
 
     } else {
-      const [odesliData, tfData] = await Promise.allSettled([
+      const q = cleanQ(item.title) + ' ' + cleanQ(item.artist);
+      const itunesUrl = `https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`;
+
+      const [odesliData, tfData, itunesData] = await Promise.allSettled([
         fetchOdesli(item.appleUrl),
         fetchTinyfish(item.title, item.artist, item.album),
+        (!item.previewUrl || !item.appleUrl) ? fetch(itunesUrl).then(r => r.json()) : Promise.resolve(null)
       ]);
+
       if (myId !== lastResolveId) return;
       od = odesliData.status === 'fulfilled' ? odesliData.value : null;
       tf = tfData.status === 'fulfilled' ? tfData.value : {};
-      await pullItunes(getItunesId(od));
-
-      if (!item.previewUrl) {
-        try {
-          const q = cleanQ(item.title) + ' ' + cleanQ(item.artist);
-          const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`);
-          const d = await r.json();
-          if (d.results?.[0]) {
-            item.previewUrl = d.results[0].previewUrl;
-            item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
-            if (!item.appleUrl) item.appleUrl = d.results[0].trackViewUrl;
-          }
-        } catch (e) { }
+      
+      const it = itunesData.status === 'fulfilled' ? itunesData.value : null;
+      if (it?.results?.[0]) {
+        const r = it.results[0];
+        if (!item.previewUrl) item.previewUrl = r.previewUrl;
+        if (!item.appleUrl) item.appleUrl = r.trackViewUrl;
+        item.art = (r.artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
       }
+
+      await pullItunes(getItunesId(od));
     }
 
     const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};

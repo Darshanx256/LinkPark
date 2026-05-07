@@ -347,7 +347,12 @@ app.get('/api/odesli', requireApiAccess, async (req, res) => {
       const response = await strategies[i]();
       if (response.ok) {
         const text = await response.text();
-        cacheSet(cacheKey, text);
+        try {
+          JSON.parse(text);
+          cacheSet(cacheKey, text);
+        } catch (e) {
+          console.warn(`[odesli] Strategy returned invalid JSON, skipping cache.`);
+        }
         res.setHeader('Content-Type', 'application/json');
         return res.send(text);
       }
@@ -393,7 +398,12 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
       );
       if (response.ok) {
         const text = await response.text();
-        cacheSet(cacheKey, text);
+        try {
+          JSON.parse(text);
+          cacheSet(cacheKey, text);
+        } catch (e) {
+          console.warn(`[search] Tinyfish returned invalid JSON, skipping cache.`);
+        }
         res.setHeader('Content-Type', 'application/json');
         return res.send(text);
       }

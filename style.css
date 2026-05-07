@@ -58,8 +58,10 @@ main {
 /* ─── Dynamic Logo ─── */
 @property --pink-x { syntax: '<percentage>'; inherits: false; initial-value: 75%; }
 @property --pink-y { syntax: '<percentage>'; inherits: false; initial-value: 30%; }
+@property --pink-s { syntax: '<percentage>'; inherits: false; initial-value: 25%; }
 @property --blue-x { syntax: '<percentage>'; inherits: false; initial-value: 25%; }
 @property --blue-y { syntax: '<percentage>'; inherits: false; initial-value: 75%; }
+@property --blue-s { syntax: '<percentage>'; inherits: false; initial-value: 35%; }
 
 header {
   text-align: center;
@@ -77,8 +79,8 @@ header {
   background-color: #ffffff;
 
   background-image:
-    radial-gradient(circle at var(--pink-x) var(--pink-y), rgba(255, 184, 242, 0.9) 0%, rgba(255, 184, 242, 0) 25%),
-    radial-gradient(circle at var(--blue-x) var(--blue-y), rgba(140, 120, 255, 0.62) 0%, rgba(96, 80, 255, 0) 35%);
+    radial-gradient(circle at var(--pink-x) var(--pink-y), rgba(255, 184, 242, 0.9) 0%, rgba(255, 184, 242, 0) var(--pink-s)),
+    radial-gradient(circle at var(--blue-x) var(--blue-y), rgba(140, 120, 255, 0.62) 0%, rgba(96, 80, 255, 0) var(--blue-s));
 
   -webkit-mask-image: url('assets/logo_base.webp');
   -webkit-mask-size: contain;
@@ -90,7 +92,7 @@ header {
   mask-position: center;
   mask-repeat: no-repeat;
 
-  animation: breatheHues 6s infinite ease-in-out alternate;
+  animation: breatheHues 8s infinite ease-in-out alternate;
 }
 
 .logo::before {
@@ -111,16 +113,16 @@ header {
 
 @keyframes breatheHues {
   0% {
-    --pink-x: 82%; --pink-y: 22%;
-    --blue-x: 18%; --blue-y: 78%;
+    --pink-x: 82%; --pink-y: 22%; --pink-s: 22%;
+    --blue-x: 18%; --blue-y: 78%; --blue-s: 32%;
   }
   50% {
-    --pink-x: 60%; --pink-y: 48%;
-    --blue-x: 40%; --blue-y: 52%;
+    --pink-x: 60%; --pink-y: 48%; --pink-s: 28%;
+    --blue-x: 40%; --blue-y: 52%; --blue-s: 40%;
   }
   100% {
-    --pink-x: 78%; --pink-y: 28%;
-    --blue-x: 22%; --blue-y: 72%;
+    --pink-x: 78%; --pink-y: 28%; --pink-s: 24%;
+    --blue-x: 22%; --blue-y: 72%; --blue-s: 36%;
   }
 }
 
