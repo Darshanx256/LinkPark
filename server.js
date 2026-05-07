@@ -18,52 +18,41 @@ const API_RATE_LIMIT_MAX = parsePositiveInt(process.env.API_RATE_LIMIT_MAX, 120)
  * Keys are selected randomly per request to distribute load evenly
  * and avoid predictable rate-limit patterns.
  */
-const TFKEYS = (process.env.TFKEY || '')
-  .split(',')
-  .map(k => k.trim())
-  .filter(Boolean)
-  .slice(0, 9);
+const TFKEYS = (process.env.TFKEY || '').split(',').map(k => k.trim()).filter(Boolean);
 
 /**
- * Returns a shuffled copy of the key indices array.
- * Guarantees each key is tried exactly once per request, in a random order.
+ * Parses allowed origins from the SERVICE environment variable.
+ * Used for CORS configuration in both proxy and standalone modes.
  */
-function shuffleKeys() {
-  return Array.from({ length: TFKEYS.length }, (_, i) => i)
-    .sort(() => Math.random() - 0.5);
-}
+const ALLOWED_ORIGINS = (process.env.SERVICE || '').split(',').map(o => o.trim()).filter(Boolean);
 
 /**
- * High-performance generic Least-Recently-Used (LRU) Cache.
- * Extends native Map to guarantee a mathematical ceiling on RAM usage.
+ * Proof of Work (PoW) configuration.
+ * difficulty: Number of leading zeros required in the SHA-256 hash.
+ * activeChallenges: Map of valid, single-use seeds pending resolution.
  */
-class LRUCache extends Map {
-  constructor(maxSize) {
-    super();
-    this.maxSize = maxSize;
+const POW_DIFFICULTY = parsePositiveInt(process.env.POW_DIFFICULTY, 4);
+const activeChallenges = new Map();
+
+// Background cleanup for expired challenges every minute
+setInterval(() => {
+  const now = Date.now();
+  for (const [seed, challenge] of activeChallenges.entries()) {
+    if (now > challenge.expiresAt) activeChallenges.delete(seed);
   }
-  get(key) {
-    if (!super.has(key)) return undefined;
-    const val = super.get(key);
-    super.delete(key);
-    super.set(key, val); // Move to front (most recently used)
-    return val;
+}, 60000);
+
+const CACHE_TTL = 14 * 24 * 60 * 60 * 1000;
+const cache = new Map();
+const CACHE_LIMIT = 500;
+
+function cacheSet(key, value) {
+  if (cache.size >= CACHE_LIMIT) {
+    const firstKey = cache.keys().next().value;
+    cache.delete(firstKey);
   }
-  set(key, val) {
-    if (super.size >= this.maxSize && !super.has(key)) {
-      super.delete(super.keys().next().value); // Evict least recently used (first inserted)
-    }
-    super.set(key, val);
-    return this;
-  }
+  cache.set(key, { value, expires: Date.now() + CACHE_TTL });
 }
-
-const CACHE_TTL = 48 * 60 * 60 * 1000;
-
-// Hard limits protect against memory exhaustion during high load / attacks
-const cache = new LRUCache(500);
-const activeChallenges = new LRUCache(5000);
-const apiLimit = new LRUCache(10000);
 
 function cacheGet(key) {
   const entry = cache.get(key);
@@ -72,79 +61,66 @@ function cacheGet(key) {
     cache.delete(key);
     return null;
   }
-  return entry.data; // Now returns a raw string
+  return entry.value;
 }
 
-function cacheSet(key, rawStringData) {
-  cache.set(key, { data: rawStringData, expires: Date.now() + CACHE_TTL });
+/** Rate Limit Stores */
+const sessionLimit = new Map();
+const apiLimit = new Map();
+
+function parsePositiveInt(val, fallback) {
+  const n = parseInt(val);
+  return (isNaN(n) || n <= 0) ? fallback : n;
 }
-
-/**
- * Authorized origins for browser-based CORS requests.
- * Restricts access to the proxy server to specific frontend deployments.
- */
-const ALLOWED_ORIGINS = (process.env.SERVICE || '')
-  .split(',')
-  .map(normalizeAllowedOrigin)
-  .filter(Boolean);
-const POW_DIFFICULTY = 4; // 4 hex zeros = ~65,536 iterations on average
-
-function parsePositiveInt(value, fallback) {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function normalizeAllowedOrigin(value) {
-  const trimmed = String(value || '').trim();
-  if (!trimmed) return '';
-  try {
-    return new URL(trimmed).origin;
-  } catch (_) {
-    console.warn(`Ignoring invalid SERVICE origin: ${trimmed}`);
-    return '';
-  }
-}
-
-
 
 function getClientIp(req) {
-  let clientIp = req.ip || '';
-  if (clientIp.startsWith('::ffff:')) clientIp = clientIp.replace('::ffff:', '');
-  return clientIp;
-}
-
-function isAllowedOrigin(origin) {
-  return Boolean(origin && ALLOWED_ORIGINS.includes(origin));
-}
-
-function deny(req, res, status, code) {
-  console.warn(`[deny] ${code} ${req.method} ${req.path} - IP: ${getClientIp(req)}`);
-  res.status(status).json({ error: code });
+  return req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
 }
 
 function consumeRateLimit(store, key, windowMs, max) {
   const now = Date.now();
   const current = store.get(key);
-  
-  // Lazy expiration: overwrite if expired
-  if (!current || now >= current.resetAt) {
+  if (!current || now > current.resetAt) {
     store.set(key, { count: 1, resetAt: now + windowMs });
     return true;
   }
-  
   current.count += 1;
   return current.count <= max;
+}
+
+/** Helper to shuffle API key selection order */
+function shuffleKeys() {
+  return TFKEYS.map((_, i) => i).sort(() => Math.random() - 0.5);
+}
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || isAllowedOrigin(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'X-LP-Nonce', 'X-LP-Seed'],
+  maxAge: 86400
+};
+
+app.use(cors(corsOptions));
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (ALLOWED_ORIGINS.length === 0) return true;
+  return ALLOWED_ORIGINS.some(allowed => origin === allowed || origin.endsWith('.' + allowed));
 }
 
 function hasCompatibleFetchMetadata(req) {
   const site = req.get('sec-fetch-site');
   const mode = req.get('sec-fetch-mode');
-  const dest = req.get('sec-fetch-dest');
+  if (!site || !mode) return true;
+  return ['same-origin', 'same-site', 'cross-site'].includes(site) && mode === 'cors';
+}
 
-  if (site && !['same-origin', 'same-site', 'cross-site'].includes(site)) return false;
-  if (mode && !['cors', 'same-origin'].includes(mode)) return false;
-  if (dest && dest !== 'empty') return false;
-  return true;
+function deny(req, res, status, code) {
+  console.warn(`[deny] ${status} ${code} | IP: ${getClientIp(req)} | UA: ${req.get('user-agent')}`);
+  return res.status(status).json({ error: code });
 }
 
 function requireAllowedOrigin(req, res, next) {
@@ -184,208 +160,59 @@ function requireApiAccess(req, res, next) {
   return next();
 }
 
-/**
- * Parses the IP_ALLOWLIST environment variable into a lookup array.
- * Required for non-browser monitoring services like UptimeRobot.
- */
-let ALLOWED_IPS = [];
-try {
-  const list = JSON.parse(process.env.IP_ALLOWLIST || '{}');
-  if (list.prefixes) {
-    ALLOWED_IPS = list.prefixes
-      .filter(p => p && p.ip_prefix)
-      .map(p => p.ip_prefix.split('/')[0]);
-  }
-} catch (e) {
-  console.error('Failed to parse IP_ALLOWLIST:', e.message);
-}
+/** Internal resolution helpers */
+async function resolveOdesli(url, country = 'US') {
+  const cacheKey = `od:${url}:${country}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return JSON.parse(cached);
 
-/** Configures the application to trust the reverse proxy (Render). */
-app.set('trust proxy', true);
-
-/** Public health check — bypasses all auth middleware. */
-app.get('/health', (req, res) => res.status(200).send('OK'));
-
-/** Global request logger. */
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - IP: ${getClientIp(req)}`);
-  next();
-});
-
-app.use(express.json({ limit: '16kb' }));
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow if origin is missing (same-origin or non-browser request) or whitelisted
-    if (!origin || isAllowedOrigin(origin)) {
-      callback(null, true);
-    } else {
-      callback(null, false);
-    }
-  },
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-LP-Nonce', 'X-LP-Seed']
-}));
-
-/** IP allowlist guard for non-browser requests. */
-app.use((req, res, next) => {
-  if (ALLOWED_IPS.length === 0) return next();
-
-  const clientIp = getClientIp(req);
-
-  if (ALLOWED_IPS.includes(clientIp) || clientIp === '127.0.0.1' || clientIp === '::1') return next();
-  if (isAllowedOrigin(req.get('origin'))) return next();
-
-  return deny(req, res, 403, 'ip_not_allowed');
-});
-
-/**
- * Dynamic Preview Wrapper for Social Sharing.
- * Decodes the 's' parameter, fetches high-res artwork, and serves OG tags.
- * Redirects the actual user to the GitHub Pages site.
- */
-app.get('/share', async (req, res) => {
-  const s = req.query.s;
-  const baseUrl = 'https://darshanx256.github.io/LinkPark/';
+  const target = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}&userCountry=${country}`;
   
-  if (!s) return res.redirect(baseUrl);
+  // 'Pro-Proxy' Strategy: Race multiple providers simultaneously to ensure near-zero latency.
+  const providers = [
+    target,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(target)}` // Special case for .contents
+  ];
+
+  const controller = new AbortController();
+  const tasks = providers.map(async (u, i) => {
+    try {
+      const response = await fetch(u, { signal: controller.signal, timeout: 5000 });
+      if (response.ok) {
+        let text = await response.text();
+        // Handle allorigins.win/get wrapper
+        if (u.includes('allorigins.win/get')) {
+          try { text = JSON.parse(text).contents; } catch (e) { throw e; }
+        }
+        
+        const data = JSON.parse(text);
+        if (data.entityUniqueId) {
+          controller.abort(); // Cancel other pending requests
+          return { data, text };
+        }
+      }
+      throw new Error('fail');
+    } catch (e) { throw e; }
+  });
 
   try {
-    // 1. Decompress metadata
-    const bin = Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-    const decompressed = zlib.inflateSync(bin).toString('utf8');
-    const [title, artist, itunesId] = decompressed.split('|');
-
-    if (!title || !artist) throw new Error('Invalid payload');
-
-    // 2. Fetch high-res artwork from iTunes (not included in 's' to save space)
-    let art = `${baseUrl}assets/logo.webp`;
-    if (itunesId) {
-      try {
-        const r = await fetch(`https://itunes.apple.com/lookup?id=${itunesId}`);
-        const d = await r.json();
-        if (d.results?.[0]) {
-          art = d.results[0].artworkUrl100.replace('100x100bb', '600x600bb');
-        }
-      } catch (err) {
-        console.warn(`[share] iTunes lookup failed for ${itunesId}:`, err.message);
-      }
-    }
-
-    // 3. Serve page with Open Graph tags and immediate redirect
-    res.setHeader('Content-Type', 'text/html');
-    res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>${title} — ${artist}</title>
-  <meta property="og:title" content="${title} — ${artist}">
-  <meta property="og:description" content="Listen to this track on your favorite streaming platform via LinkPark.">
-  <meta property="og:image" content="${art}">
-  <meta property="og:type" content="music.song">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#0a0a0f">
-  <meta http-equiv="refresh" content="0;url=${baseUrl}?s=${encodeURIComponent(s)}">
-</head>
-<body style="background:#0a0a0f;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-  <div style="text-align:center;">
-    <p>Redirecting to LinkPark...</p>
-    <script>window.location.href = "${baseUrl}?s=" + encodeURIComponent("${s}");</script>
-  </div>
-</body>
-</html>`);
-  } catch (err) {
-    console.error(`[share] Failed to generate preview for ${s.slice(0, 10)}...:`, err.message);
-    res.redirect(`${baseUrl}?s=${encodeURIComponent(s)}`);
+    // Return the first successful resolution
+    const { data, text } = await Promise.any(tasks);
+    cacheSet(cacheKey, text);
+    return data;
+  } catch (e) {
+    return null;
   }
-});
+}
 
-app.get('/api/challenge', requireAllowedOrigin, (req, res) => {
-  const seed = crypto.randomBytes(16).toString('hex');
-  const origin = req.get('origin');
-  
-  // Seed expires in 2 minutes
-  activeChallenges.set(seed, { origin, expiresAt: Date.now() + 2 * 60 * 1000 });
-  res.json({ seed, difficulty: POW_DIFFICULTY });
-});
-/**
- * Odesli proxy with 48-hour caching.
- * Cache key is the normalized URL + country pair so regional variants are cached separately.
- */
-app.get('/api/odesli', requireApiAccess, async (req, res) => {
-  const { url, userCountry } = req.query;
-  if (!url) return res.status(400).json({ error: 'url is required' });
-
-  const cacheKey = `odesli:${url}:${userCountry || 'US'}`;
-  const cached = cacheGet(cacheKey);
-  if (cached) {
-    console.log(`[cache hit] ${cacheKey}`);
-    res.setHeader('Content-Type', 'application/json');
-    return res.send(cached);
-  }
-
-  const target = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}&userCountry=${userCountry || 'US'}`;
-
-  /**
-   * Randomized fetch strategies to bypass potential Odesli IP blocks.
-   * Shuffled each request to distribute load across fallback proxies.
-   */
-  const strategies = [
-    async () => await fetch(target),
-    async () => await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`),
-    async () => {
-      const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(target)}`);
-      if (!r.ok) return r;
-      const j = await r.json();
-      return { ok: true, text: async () => j.contents };
-    },
-    async () => await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`)
-  ].sort(() => Math.random() - 0.5);
-
-  for (let i = 0; i < strategies.length; i++) {
-    try {
-      const response = await strategies[i]();
-      if (response.ok) {
-        const text = await response.text();
-        try {
-          JSON.parse(text);
-          cacheSet(cacheKey, text);
-        } catch (e) {
-          console.warn(`[odesli] Strategy returned invalid JSON, skipping cache.`);
-        }
-        res.setHeader('Content-Type', 'application/json');
-        return res.send(text);
-      }
-      console.warn(`Odesli strategy attempt ${i + 1} failed: ${response.status}`);
-    } catch (error) {
-      console.warn(`Odesli strategy attempt ${i + 1} error:`, error.message);
-    }
-  }
-
-  res.status(502).json({ error: 'Odesli resolution failed across all available proxy strategies.' });
-});
-
-/**
- * Tinyfish search proxy with 48-hour caching and random key selection.
- * Each query is cached by its exact text so identical searches never
- * hit the Tinyfish API twice within the TTL window.
- * On a rate-limit (429) or server error, retries with a different random key.
- */
-app.get('/api/search', requireApiAccess, async (req, res) => {
-  const { query } = req.query;
-
-  if (!query) return res.status(400).json({ error: 'Query is required' });
-  if (TFKEYS.length === 0) return res.status(500).json({ error: 'Missing API Key' });
-
+async function resolveSearch(query) {
+  if (TFKEYS.length === 0) return null;
   const cacheKey = `tf:${query}`;
   const cached = cacheGet(cacheKey);
-  if (cached) {
-    console.log(`[cache hit] ${cacheKey}`);
-    res.setHeader('Content-Type', 'application/json');
-    return res.send(cached);
-  }
+  if (cached) return JSON.parse(cached);
 
-  // Shuffle key indices once — guaranteed unique order, no retry collisions
   const keyOrder = shuffleKeys();
   const maxAttempts = Math.min(keyOrder.length, 9);
 
@@ -394,57 +221,111 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
     try {
       const response = await fetch(
         `https://api.search.tinyfish.ai/?query=${encodeURIComponent(query)}`,
-        { headers: { 'X-API-Key': currentKey } }
+        { headers: { 'X-API-Key': currentKey }, timeout: 6000 }
       );
       if (response.ok) {
         const text = await response.text();
         try {
-          JSON.parse(text);
+          const data = JSON.parse(text);
           cacheSet(cacheKey, text);
-        } catch (e) {
-          console.warn(`[search] Tinyfish returned invalid JSON, skipping cache.`);
-        }
-        res.setHeader('Content-Type', 'application/json');
-        return res.send(text);
+          return data;
+        } catch (e) { continue; }
       }
-      console.warn(`Tinyfish attempt ${i + 1} (key #${keyOrder[i]}) failed: ${response.status}`);
-    } catch (error) {
-      console.warn(`Tinyfish attempt ${i + 1} (key #${keyOrder[i]}) errored:`, error.message);
-    }
+    } catch (error) { continue; }
   }
+  return null;
+}
 
-  res.status(502).json({ error: 'Search failed after multiple API key attempts.' });
+/** Endpoints */
+
+app.get('/api/challenge', requireAllowedOrigin, (req, res) => {
+  const seed = crypto.randomBytes(16).toString('hex');
+  const origin = req.get('origin');
+  activeChallenges.set(seed, { origin, expiresAt: Date.now() + 2 * 60 * 1000 });
+  res.json({ seed, difficulty: POW_DIFFICULTY });
 });
 
-/** Cache stats endpoint — useful for monitoring without exposing data. */
+app.get('/api/odesli', requireApiAccess, async (req, res) => {
+  const { url, userCountry } = req.query;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+  const data = await resolveOdesli(url, userCountry);
+  if (data) return res.json(data);
+  res.status(502).json({ error: 'Odesli resolution failed' });
+});
+
+app.get('/api/search', requireApiAccess, async (req, res) => {
+  const { query } = req.query;
+  if (!query) return res.status(400).json({ error: 'Query is required' });
+  const data = await resolveSearch(query);
+  if (data) return res.json(data);
+  res.status(502).json({ error: 'Search failed' });
+});
+
+app.get('/api/resolve', requireApiAccess, async (req, res) => {
+  const { query, u, artist, album, country } = req.query;
+  const tasks = [];
+
+  let od = null;
+  if (u) tasks.push(resolveOdesli(u, country).then(d => od = d));
+
+  let tfSp = null, tfYt = null;
+  if (query) {
+    const qBase = query + (artist ? ' ' + artist : '');
+    const qSpot = qBase + ' spotify track';
+    const qYt = qBase + (album ? ' ' + album : '') + ' youtube music topic';
+    tasks.push(resolveSearch(qSpot).then(d => tfSp = d));
+    tasks.push(resolveSearch(qYt).then(d => tfYt = d));
+  }
+
+  await Promise.allSettled(tasks);
+
+  const links = {};
+  const platforms = ['spotify', 'youtubeMusic', 'appleMusic', 'youtube', 'amazonMusic', 'tidal', 'deezer', 'pandora'];
+
+  platforms.forEach(pid => {
+    let href = od?.linksByPlatform?.[pid]?.url;
+    if (!href && pid === 'youtubeMusic') {
+      const yt = od?.linksByPlatform?.youtube?.url;
+      if (yt && yt.includes('watch')) {
+        href = yt.replace('www.youtube.com', 'music.youtube.com').replace('youtube.com', 'music.youtube.com');
+      }
+    }
+    if (href) links[pid] = href;
+  });
+
+  if (!links.spotify && tfSp?.results) {
+    const r = tfSp.results.find(it => it.url.includes('open.spotify.com/track'));
+    if (r) links.spotify = r.url;
+  }
+  if (!links.youtubeMusic && tfYt?.results) {
+    const r = tfYt.results.find(it => it.url.includes('music.youtube.com') || it.url.includes('youtube.com/watch'));
+    if (r) links.youtubeMusic = (r?.url || '').replace('www.youtube.com', 'music.youtube.com').replace('youtube.com', 'music.youtube.com');
+  }
+
+  const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
+  res.json({
+    links,
+    title: ent.title || null,
+    artist: ent.artistName || null,
+    art: ent.thumbnailUrl || null
+  });
+});
+
 app.get('/api/cache-stats', requireApiAccess, (req, res) => {
   const now = Date.now();
   let active = 0;
-  for (const entry of cache.values()) {
-    if (now <= entry.expires) active++;
-  }
-  res.json({ total: cache.size, active, limit: cache.maxSize, ttl_hours: CACHE_TTL / 3600000 });
+  for (const entry of cache.values()) if (now <= entry.expires) active++;
+  res.json({ total: cache.size, active, limit: CACHE_LIMIT, ttl_hours: CACHE_TTL / 3600000 });
 });
 
-/**
- * Deployment Mode Configuration.
- * Proxy-only mode: when SERVICE env var is set, acts as API proxy for external frontends.
- * Standalone mode: serves both the API and the static LinkPark frontend.
- */
 if (ALLOWED_ORIGINS.length > 0) {
   console.log(`Proxy-only mode. Whitelist: ${ALLOWED_ORIGINS.join(', ')}`);
 } else {
   app.use(express.static(__dirname));
-
-  app.get('/config.js', (req, res) => {
-    res.type('application/javascript').send('// Standalone mode: key handled by proxy');
-  });
-
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-  });
+  app.get('/config.js', (req, res) => res.type('application/javascript').send('// Standalone mode'));
+  app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 }
 
 app.listen(PORT, () => {
-  console.log(`LinkPark is live on port ${PORT} | Keys loaded: ${TFKEYS.length} | Cache limit: ${cache.maxSize} entries`);
+  console.log(`LinkPark is live on port ${PORT} | Keys: ${TFKEYS.length} | Cache: ${CACHE_LIMIT}`);
 });

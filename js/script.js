@@ -21,77 +21,54 @@ async function solvePoW(seed, difficulty) {
     const data = encoder.encode(seed + nonce);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
-    // Convert bytes to hex string
     const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     
     if (hashHex.startsWith(target)) return nonce;
-    
     nonce++;
 
-    // Increase yield frequency to prioritize audio decoding and background network tasks.
     if (nonce % 500 === 0) await new Promise(r => setTimeout(r, 0));
   }
 }
 
 function fetchAndSolveChallenge() {
   if (!PROXY_URL) return;
-  
   const ts = Date.now();
   const promise = (async () => {
     try {
       const res = await fetch(`${PROXY_URL}/api/challenge`);
       if (!res.ok) throw new Error('Challenge fetch failed');
       const { seed, difficulty } = await res.json();
-      
       const nonce = await solvePoW(seed, difficulty);
       return { seed, nonce, ts };
     } catch (e) {
       console.error('PoW challenge failed:', e);
-      // Remove failed promise from queue
       const idx = challengeQueue.findIndex(item => item.promise === promise);
       if (idx > -1) challengeQueue.splice(idx, 1);
       await new Promise(r => setTimeout(r, 2000));
       throw e;
     }
   })();
-  
   challengeQueue.push({ promise, ts });
 }
 
 async function getPoWHeaders() {
   if (!PROXY_URL) return { 'X-API-Key': TFKEY };
-
   const now = Date.now();
-  // Discard challenges older than 90 seconds (server expires them at 120s)
   while (challengeQueue.length > 0 && (now - challengeQueue[0].ts > 90000)) {
     challengeQueue.shift();
   }
-
   if (challengeQueue.length === 0) fetchAndSolveChallenge();
-  
   try {
     const { promise } = challengeQueue.shift();
     const pow = await promise;
-    
-    // Top up the pool
     if (challengeQueue.length < 2) fetchAndSolveChallenge();
-    
-    return {
-      'X-LP-Seed': pow.seed,
-      'X-LP-Nonce': pow.nonce.toString()
-    };
+    return { 'X-LP-Seed': pow.seed, 'X-LP-Nonce': pow.nonce.toString() };
   } catch (e) {
-    // If the shifted promise failed, retry with next available
     if (challengeQueue.length > 0) return getPoWHeaders();
     return {};
   }
 }
 
-/**
- * Advanced Compression & Encoding Engine.
- * Uses browser-native CompressionStream (Deflate) and URL-safe Base64 
- * to create the smallest possible shareable links without external libraries.
- */
 async function compress(str) {
   const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('deflate'));
   const buffer = await new Response(stream).arrayBuffer();
@@ -111,10 +88,7 @@ async function decompress(b64) {
 
 async function encodeShare(d) {
   const sl = [];
-  // Store only "Odesli-exclusive" or "Hard to find" IDs to save space.
-  // Spotify and YT Music can be re-resolved via Tinyfish for free.
   const EXCLUSIVE = ['amazonMusic', 'tidal', 'deezer', 'pandora'];
-
   for (const pid of EXCLUSIVE) {
     if (d.l[pid]) {
       const k = SREV[pid] || pid;
@@ -126,11 +100,7 @@ async function encodeShare(d) {
       sl.push(`${k}:${v}`);
     }
   }
-
-  // Get iTunes ID from Apple link if available
   const itid = d.l.appleMusic?.match(/[?&]i=(\d+)/)?.[1] || '';
-
-  // Format: Title|Artist|iTunesID|ExclusiveLinks
   const pipe = [d.t, d.a, itid, sl.join(',')].join('|');
   return await compress(pipe);
 }
@@ -157,11 +127,6 @@ async function decodeShare(s) {
     return { t: a[0], a: a[1], itunesId: a[2], l: links };
   } catch (e) { return null; }
 }
-/** 
- * Platform definitions for UI rendering and link mapping.
- * Ordered by display priority. 
- */
-
 
 const qEl = document.getElementById('q');
 const ddEl = document.getElementById('dd');
@@ -172,9 +137,6 @@ const cardEl = document.getElementById('card');
 const linksEl = document.getElementById('links');
 const logoEl = document.querySelector('.logo');
 
-/** 
- * Logo 'Home' functionality: Clears search, resets state, and cleans URL.
- */
 if (logoEl) {
   logoEl.addEventListener('click', () => {
     qEl.value = '';
@@ -189,31 +151,18 @@ if (logoEl) {
   });
 }
 
-/** 
- * UI state variables.
- * timer: Ref for search debouncing.
- * idx: Tracks keyboard navigation index in dropdown.
- * items: Local cache of current search suggestions.
- */
 let timer = null, idx = -1, items = [];
-
 const audio = new Audio();
 let isPlaying = false;
 
-/**
- * Orchestrates audio playback states and progress UI updates.
- * listenners handle the native HTML5 Audio events to sync CSS and text labels.
- */
 audio.addEventListener('play', () => { isPlaying = true; updatePlayBtn(); });
 audio.addEventListener('pause', () => { isPlaying = false; updatePlayBtn(); });
 audio.addEventListener('ended', () => { isPlaying = false; updatePlayBtn(); });
 let lastTimeUpdate = 0;
 audio.addEventListener('timeupdate', () => {
   const now = Date.now();
-  // Throttle UI updates to 2Hz to minimize main-thread overhead and preserve battery.
   if (now - lastTimeUpdate < 500) return;
   lastTimeUpdate = now;
-
   if (!audio.duration) return;
   const p = (audio.currentTime / audio.duration) * 100;
   document.getElementById('seekFill').style.width = `${p}%`;
@@ -236,15 +185,11 @@ document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => 
   const btn = e.currentTarget;
   const currentUrl = new URL(window.location.href);
   const hash = await encodeShare(currentData);
-
-  // Use the Render proxy for sharing to enable dynamic OG tags (Social Previews)
   const shareUrl = PROXY_URL ? new URL(`${PROXY_URL}/share`) : currentUrl;
   shareUrl.searchParams.set('s', hash);
-
   try {
     await navigator.clipboard.writeText(shareUrl.toString());
     window.history.replaceState({}, '', shareUrl);
-
     const oldHtml = btn.innerHTML;
     btn.classList.add('copied');
     btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied Link`;
@@ -252,53 +197,48 @@ document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => 
   } catch (err) { }
 });
 
-/**
- * Instantly renders a shared card from URL parameters.
- * Bypasses all API calls to provide immediate visual feedback to recipients.
- */
 window.addEventListener('load', async () => {
   const s = new URLSearchParams(window.location.search).get('s');
   if (s) {
     const data = await decodeShare(s);
     if (data) {
       setLoad(true);
-
-      // Background Resolution: Get high-res assets and links
       const myId = ++lastResolveId;
       try {
-        let art = '', preview = '', appleUrl = '';
-
-        // 1. Fetch iTunes info (cheap, covers art, preview, apple link, album)
-        let album = '';
-        if (data.itunesId) {
-          const r = await fetch(`https://itunes.apple.com/lookup?id=${data.itunesId}&country=${COUNTRY}`);
-          const d = await r.json();
-          if (d.results?.[0]) {
-            const track = d.results[0];
-            art = track.artworkUrl100.replace('100x100bb', '600x600bb');
-            preview = track.previewUrl;
-            appleUrl = track.trackViewUrl;
-            album = track.collectionName || '';
+        const fetchResolve = async (retry = true) => {
+          if (!PROXY_URL) return null;
+          const h = await getPoWHeaders();
+          const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(data.t + ' ' + data.a)}&artist=${enc(data.a)}&country=${COUNTRY}`, { headers: h });
+          if (r.status === 401 && retry) {
+             challengeQueue.length = 0;
+             return fetchResolve(false);
           }
-        }
+          return r.ok ? r.json() : null;
+        };
 
-        // 2. Fetch Tinyfish (cheap, covers spotify, youtube)
-        const tf = await fetchTinyfish(data.t, data.a, album).catch(() => ({}));
+        const [res, it] = await Promise.allSettled([
+          fetchResolve(),
+          data.itunesId ? fetch(`https://itunes.apple.com/lookup?id=${data.itunesId}&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
+        ]);
 
         if (myId !== lastResolveId) return;
+        const resolved = res.status === 'fulfilled' ? res.value : null;
+        const itData = it.status === 'fulfilled' ? it.value : null;
 
-        // 3. Merge with Odesli links from share
-        const merged = { ...data.l };
-        if (tf.spotify) merged.spotify = tf.spotify;
-        if (tf.youtubeMusic) merged.youtubeMusic = tf.youtubeMusic;
-        if (appleUrl) merged.appleMusic = appleUrl;
-
-        // Only show everything once resolution is 100% complete
+        let art = '', preview = '', merged = { ...data.l };
+        if (itData?.results?.[0]) {
+           const track = itData.results[0];
+           art = track.artworkUrl100.replace('100x100bb', '600x600bb');
+           preview = track.previewUrl;
+           merged.appleMusic = track.trackViewUrl;
+        }
+        if (resolved) {
+           Object.assign(merged, resolved.links);
+           art = art || resolved.art;
+        }
         populateUI(data.t, data.a, art, preview, merged);
         cardEl.style.display = 'block';
       } catch (e) {
-        console.error('Hybrid resolve failed', e);
-        // Fallback: at least show what we have if APIs fail
         populateUI(data.t, data.a, '', '', data.l);
         cardEl.style.display = 'block';
       }
@@ -307,20 +247,12 @@ window.addEventListener('load', async () => {
   }
 });
 
-/**
- * Formats seconds into a human-readable MM:SS string.
- * @param {number} s - Time in seconds.
- * @returns {string} Formatted duration.
- */
 function formatTime(s) {
   const min = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
   return `${min}:${sec.toString().padStart(2, '0')}`;
 }
 
-/**
- * Toggles play/pause button visuals based on current playback state.
- */
 function updatePlayBtn() {
   const btn = document.getElementById('playBtn');
   if (!btn) return;
@@ -333,10 +265,6 @@ function updatePlayBtn() {
   }
 }
 
-/**
- * Dispatches input to either URL resolution or search suggestion.
- * Uses a 220ms debounce to minimize API chatter and improve typing feel.
- */
 qEl.addEventListener('input', () => {
   clearTimeout(timer);
   const v = qEl.value.trim();
@@ -349,29 +277,16 @@ qEl.addEventListener('input', () => {
       window.history.replaceState({}, '', url);
     }
   }
-
   if (v.length < 2) return;
-
-  /**
-   * Identifies if input is a streaming URL or Spotify URI.
-   * If detected, bypasses suggestion logic and attempts direct resolution.
-   */
   if (!/\s/.test(v) && /^(https?:\/\/|spotify:track:)/i.test(v)) {
     let url = v;
-    if (!/^https?:\/\//i.test(url) && !url.startsWith('spotify:')) {
-      url = 'https://' + url;
-    }
+    if (!/^https?:\/\//i.test(url) && !url.startsWith('spotify:')) url = 'https://' + url;
     timer = setTimeout(() => resolve(url), 220);
     return;
   }
-
   timer = setTimeout(() => suggest(v), 220);
 });
 
-/**
- * Queries iTunes API for song suggestions.
- * @param {string} q - The user's search query.
- */
 async function suggest(q) {
   try {
     const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=6&country=${COUNTRY}&v=${Date.now()}`);
@@ -380,10 +295,6 @@ async function suggest(q) {
   } catch (_) { }
 }
 
-/**
- * Builds and displays the suggestion dropdown.
- * @param {Array} tracks - Raw iTunes result array.
- */
 function renderDD(tracks) {
   if (!tracks.length) { closeDD(); return; }
   items = tracks.map(t => ({
@@ -395,7 +306,6 @@ function renderDD(tracks) {
     previewUrl: t.previewUrl,
     album: t.collectionName || '',
   }));
-
   ddEl.innerHTML = items.map((it, i) => `
     <div class="dd-item" data-i="${i}" role="option">
       <img src="${it.thumb}" loading="lazy" onerror="this.onerror=null;this.src='assets/logo.webp';" alt="${esc(it.title)} by ${esc(it.artist)}">
@@ -404,20 +314,15 @@ function renderDD(tracks) {
         <div class="dd-artist">${esc(it.artist)}</div>
       </div>
     </div>`).join('');
-
   ddEl.style.display = 'block';
   hintEl.classList.add('on');
   idx = -1;
-
   ddEl.querySelectorAll('.dd-item').forEach(el => {
     el.addEventListener('mousedown', e => e.preventDefault());
     el.addEventListener('click', () => pick(+el.dataset.i));
   });
 }
 
-/**
- * Handles keyboard accessibility for the suggestion dropdown.
- */
 qEl.addEventListener('keydown', e => {
   if (ddEl.style.display !== 'block') return;
   if (e.key === 'ArrowDown') { e.preventDefault(); idx = (idx + 1) % items.length; hl(); }
@@ -426,21 +331,10 @@ qEl.addEventListener('keydown', e => {
   else if (e.key === 'Escape') { closeDD(); }
 });
 
-/** Highlights the current keyboard-focused item. */
-function hl() {
-  ddEl.querySelectorAll('.dd-item').forEach((el, i) => el.classList.toggle('active', i === idx));
-}
-
-/** Closes the suggestion dropdown and resets state. */
+function hl() { ddEl.querySelectorAll('.dd-item').forEach((el, i) => el.classList.toggle('active', i === idx)); }
 function closeDD() { ddEl.style.display = 'none'; hintEl.classList.remove('on'); idx = -1; }
-
-/** Closes dropdown on click-outside. */
 document.addEventListener('click', e => { if (!e.target.closest('.search-wrap')) closeDD(); });
 
-/**
- * Finalizes selection from dropdown.
- * @param {number} i - Index of the selected item.
- */
 function pick(i) {
   const it = items[i]; if (!it) return;
   qEl.value = `${it.title} — ${it.artist}`;
@@ -448,262 +342,110 @@ function pick(i) {
   resolve(it);
 }
 
-/** Handles mobile 'Go' / 'Enter' form submission. */
 document.getElementById('searchForm')?.addEventListener('submit', e => {
   e.preventDefault();
   const v = qEl.value.trim();
   if (!v) return;
-
-  if (ddEl.style.display === 'block' && idx >= 0) {
-    pick(idx);
-    return;
-  }
-
+  if (ddEl.style.display === 'block' && idx >= 0) { pick(idx); return; }
   const isUrl = /^(https?:\/\/|spotify:track:)/i.test(v) || (!/\s/.test(v) && v.includes('.'));
-  if (isUrl) {
-    clearTimeout(timer);
-    closeDD();
-    resolve(v);
-  }
+  if (isUrl) { clearTimeout(timer); closeDD(); resolve(v); }
 });
 
-/**
- * Main orchestration for resolving song links.
- * Coordinates Odesli, Tinyfish, and iTunes to provide full platform coverage.
- * @param {string|object} data - Either a URL string or an iTunes item object.
- */
 async function resolve(data) {
   const myId = ++lastResolveId;
   let item = typeof data === 'object' ? data : null;
+  const isUrl = typeof data === 'string';
 
-  // Instant Feedback: Show card with skeleton or partial data immediately
-  if (item) {
-    populateUI(item.title, item.artist, item.thumb.replace('100x100bb', '600x600bb'), item.previewUrl, null);
-  } else {
-    populateUI('', '', '', null, null);
-  }
+  if (item) populateUI(item.title, item.artist, item.art || item.thumb.replace('100x100bb', '600x600bb'), item.previewUrl, null);
+  else populateUI('', '', '', null, null);
   cardEl.style.display = 'block';
   setLoad(true);
 
   try {
-    let od, tf = {};
-
-    const getItunesId = (o) => {
-      const am = o?.linksByPlatform?.appleMusic;
-      if (am?.entityUniqueId) {
-        const ent = o.entitiesByUniqueId[am.entityUniqueId];
-        if (ent?.apiProvider === 'itunes') return ent.id;
+    const q = item ? `${item.title} ${item.artist}` : '';
+    const u = isUrl ? data : (item?.appleUrl || '');
+    
+    const fetchResolve = async (retry = true) => {
+      if (!PROXY_URL) return null;
+      const h = await getPoWHeaders();
+      const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(q)}&u=${enc(u)}&artist=${enc(item?.artist || '')}&album=${enc(item?.album || '')}&country=${COUNTRY}`, { headers: h });
+      if (r.status === 401 && retry) {
+        challengeQueue.length = 0;
+        return fetchResolve(false);
       }
-      return am?.url?.match(/[?&]i=(\d+)/)?.[1];
+      return r.ok ? r.json() : null;
     };
 
-    const pullItunes = async (id) => {
-      if (!id || item.previewUrl || myId !== lastResolveId) return;
-      try {
-        const r = await fetch(`https://itunes.apple.com/lookup?id=${id}&entity=song&country=${COUNTRY}`);
-        const d = await r.json();
-        if (d.results?.[0]) {
-          item.previewUrl = d.results[0].previewUrl;
-          item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
-          if (!item.appleUrl) item.appleUrl = d.results[0].trackViewUrl;
-        }
-      } catch (e) { }
-    };
+    const [resolved, itunesData] = await Promise.allSettled([
+      fetchResolve(),
+      (!item || !item.previewUrl) ? fetch(`https://itunes.apple.com/search?term=${enc(q || u)}&entity=song&limit=1&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
+    ]);
 
-    const cleanQ = (s) => s.replace(/\(.*\)|\[.*\]|- Single|- EP|Official.*|Audio/gi, '').trim();
+    if (myId !== lastResolveId) return;
+    const res = (resolved.status === 'fulfilled') ? resolved.value : null;
+    const it = (itunesData.status === 'fulfilled') ? itunesData.value : null;
 
-    if (typeof data === 'string') {
-      od = await fetchOdesli(data);
-      if (myId !== lastResolveId) return;
+    if (!item) item = { title: '', artist: '', art: '', previewUrl: null };
+    if (it?.results?.[0]) {
+      const r = it.results[0];
+      if (!item.previewUrl) item.previewUrl = r.previewUrl;
+      if (!item.art) item.art = r.artworkUrl100.replace('100x100bb', '600x600bb');
+      if (!item.title) item.title = r.trackName;
+      if (!item.artist) item.artist = r.artistName;
+      if (!item.appleUrl) item.appleUrl = r.trackViewUrl;
+    }
 
-      const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
-      item = {
-        title: ent.title || 'Unknown',
-        artist: ent.artistName || 'Unknown',
-        art: ent.thumbnailUrl || '',
-        previewUrl: null
-      };
-
-      const tasks = [pullItunes(getItunesId(od))];
-      if (ent.title) {
-        tasks.push(fetchTinyfish(ent.title, ent.artistName, ent.albumName).then(res => tf = res).catch(() => { }));
-      }
-      await Promise.allSettled(tasks);
-      if (myId !== lastResolveId) return;
-
-      let oLinks = od?.linksByPlatform || {};
-      const canon = tf.spotify;
-      if (canon && canon !== data && (!oLinks.spotify || Object.keys(oLinks).length < 3)) {
-        const upgrade = await fetchOdesli(canon).catch(() => null);
-        if (upgrade) {
-          od = upgrade;
-          if (myId !== lastResolveId) return;
-          await pullItunes(getItunesId(od));
-        }
-      }
-
-      const m = () => {
-        const e = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
-        return {
-          t: (e.title && e.title !== 'Unknown') ? e.title : item.title,
-          a: (e.artistName && e.artistName !== 'Unknown') ? e.artistName : item.artist
-        };
-      };
-
-      if (!item.previewUrl && m().t !== 'Unknown') {
-        try {
-          const { t, a } = m();
-          const q = cleanQ(t) + ' ' + cleanQ(a);
-          const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`);
-          const d = await r.json();
-          if (d.results?.[0]) {
-            item.previewUrl = d.results[0].previewUrl;
-            item.art = (d.results[0].artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
-            if (!item.appleUrl) item.appleUrl = d.results[0].trackViewUrl;
-          }
-        } catch (e) { }
-      }
-
+    if (res) {
+      populateUI(res.title || item.title, res.artist || item.artist, res.art || item.art, item.previewUrl, res.links);
+      currentData = { t: res.title || item.title, a: res.artist || item.artist, itunesId: null, l: res.links };
     } else {
-      const q = cleanQ(item.title) + ' ' + cleanQ(item.artist);
-      const itunesUrl = `https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`;
-
-      const [odesliData, tfData, itunesData] = await Promise.allSettled([
-        fetchOdesli(item.appleUrl),
-        fetchTinyfish(item.title, item.artist, item.album),
-        (!item.previewUrl || !item.appleUrl) ? fetch(itunesUrl).then(r => r.json()) : Promise.resolve(null)
-      ]);
-
-      if (myId !== lastResolveId) return;
-      od = odesliData.status === 'fulfilled' ? odesliData.value : null;
-      tf = tfData.status === 'fulfilled' ? tfData.value : {};
-      
-      const it = itunesData.status === 'fulfilled' ? itunesData.value : null;
-      if (it?.results?.[0]) {
-        const r = it.results[0];
-        if (!item.previewUrl) item.previewUrl = r.previewUrl;
-        if (!item.appleUrl) item.appleUrl = r.trackViewUrl;
-        item.art = (r.artworkUrl100 || item.art).replace('100x100bb', '600x600bb');
-      }
-
-      await pullItunes(getItunesId(od));
+      showErr('Failed to resolve song links. Please try again.');
     }
-
-    const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
-    const finalTitle = (ent.title && ent.title !== 'Unknown') ? ent.title : item.title;
-    const finalArtist = (ent.artistName && ent.artistName !== 'Unknown') ? ent.artistName : item.artist;
-
-    const links = {};
-    P.forEach(p => {
-      let href = od?.linksByPlatform?.[p.id]?.url;
-      if (!href && p.id === 'youtubeMusic') {
-        const yt = od?.linksByPlatform?.youtube?.url;
-        if (yt && yt.includes('watch')) href = yt.replace('www.youtube.com', 'music.youtube.com').replace('youtube.com', 'music.youtube.com');
-      }
-      if (href) links[p.id] = href;
-    });
-
-    if (!links.spotify && tf.spotify) links.spotify = tf.spotify;
-
-    // Always prefer Tinyfish for YouTube Music if it found a native link
-    if (tf.youtubeMusic) {
-      links.youtubeMusic = tf.youtubeMusic;
-    }
-
-    if (!links.appleMusic) {
-      if (item.appleUrl) links.appleMusic = item.appleUrl;
-      else if (typeof data === 'string' && data.includes('music.apple.com')) links.appleMusic = data;
-    }
-
-    /**
-     * Final UI population and internal state update.
-     * Prepares the data for universal sharing.
-     */
-    currentData = { t: finalTitle, a: finalArtist, v: item.art, p: item.previewUrl, l: links };
-    populateUI(finalTitle, finalArtist, item.art, item.previewUrl, links);
-    cardEl.style.display = 'block';
-
-
-
   } catch (e) {
-    if (e.message === 'NoStreamingLinks') {
-      showErr('No streaming links found for this track.');
-    } else {
-      showErr('Could not fetch links. Try again.');
-    }
-    console.error(e);
+    console.error('Resolve failed:', e);
+    if (myId === lastResolveId) showErr('Network error. Check your connection.');
   } finally {
-    setLoad(false);
+    if (myId === lastResolveId) setLoad(false);
   }
 }
 
-/**
- * Populates the card UI with provided metadata and streaming links.
- * Shared between the main resolution pipeline and the instant-load share decoder.
- */
 function populateUI(title, artist, art, preview, links) {
   const artEl = document.getElementById('art');
   const ctitleEl = document.getElementById('ctitle');
   const cartistEl = document.getElementById('cartist');
 
-  // Artwork Fallback & Skeleton
-  if (!art && !title) {
-    artEl.src = '';
-    artEl.classList.add('skeleton');
-  } else {
-    artEl.classList.remove('skeleton');
-    artEl.src = art || 'assets/logo.webp';
-  }
+  if (!art && !title) { artEl.src = ''; artEl.classList.add('skeleton'); }
+  else { artEl.classList.remove('skeleton'); artEl.src = art || 'assets/logo.webp'; }
   artEl.alt = title ? `${title} — ${artist} album artwork` : '';
 
-  // Title/Artist Skeletons
   if (!title) {
-    ctitleEl.textContent = '';
-    ctitleEl.classList.add('skeleton');
-    cartistEl.textContent = '';
-    cartistEl.classList.add('skeleton');
+    ctitleEl.textContent = ''; ctitleEl.classList.add('skeleton');
+    cartistEl.textContent = ''; cartistEl.classList.add('skeleton');
   } else {
-    ctitleEl.classList.remove('skeleton');
-    ctitleEl.textContent = title;
-    cartistEl.classList.remove('skeleton');
-    cartistEl.textContent = artist;
+    ctitleEl.classList.remove('skeleton'); ctitleEl.textContent = title;
+    cartistEl.classList.remove('skeleton'); cartistEl.textContent = artist;
     cartistEl.classList.toggle('lp-easter', artist.trim().toLowerCase().includes('linkin park'));
   }
 
   const pWrap = document.getElementById('playerWrap');
   if (preview) {
     pWrap.style.display = 'flex';
-    // Only reset audio if the source has actually changed to prevent freezing
-    const currentSrc = audio.src.split('?')[0]; // Ignore cache busters
+    const currentSrc = audio.src.split('?')[0];
     const nextSrc = preview.split('?')[0];
-    if (currentSrc !== nextSrc) {
-      audio.src = preview;
-      audio.load();
-      document.getElementById('seekFill').style.width = '0%';
-      document.getElementById('timeLabel').textContent = '0:00';
-    }
+    if (currentSrc !== nextSrc) { audio.src = preview; audio.load(); }
   } else {
     pWrap.style.display = 'none';
     audio.pause();
   }
 
   linksEl.innerHTML = '';
-  
   if (!links) {
     const shareBtn = document.getElementById('shareCardBtn');
     if (shareBtn) shareBtn.classList.add('skeleton');
-
-    // Generate Skeletons
     for (let i = 0; i < 5; i++) {
       const row = document.createElement('div');
       row.className = 'prow skeleton';
-      row.innerHTML = `
-        <div class="plink">
-          <div class="picon"></div>
-          <span class="pname"></span>
-        </div>
-        <div class="copy-btn"></div>
-      `;
+      row.innerHTML = `<div class="plink"><div class="picon"></div><span class="pname"></span></div><div class="copy-btn"></div>`;
       linksEl.append(row);
     }
     return;
@@ -728,186 +470,45 @@ function populateUI(title, artist, art, preview, links) {
   });
 }
 
-/**
- * Fetches platform links via Odesli.
- * Uses the authenticated server proxy when configured.
- * @param {string} url - Target streaming URL.
- */
-async function fetchOdesli(url, retry = true) {
-  if (ODESLI_PROXY) {
-    const headers = await getPoWHeaders();
-    const r = await fetch(`${ODESLI_PROXY}?url=${enc(url)}&userCountry=${COUNTRY}`, { headers });
-    
-    if (r.status === 401 && retry) {
-      challengeQueue.length = 0; // Clear potentially mismatched challenges
-      return fetchOdesli(url, false);
-    }
-    
-    if (r.ok) return await r.json();
-    throw new Error(`odesli proxy ${r.status}`);
-  }
-
-  /** 
-   * Fallback: Queries Odesli via AllOrigins. 
-   * Used as a fail-safe if the Node.js proxy IP is rate-limited or blocked by Odesli.
-   */
-  const target = `${ODESLI}?url=${enc(url)}&userCountry=${COUNTRY}`;
-  const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`);
-  if (!r.ok) throw new Error(`odesli ${r.status}`);
-  return r.json();
-}
-
-/**
- * Searches for streaming links on Tinyfish.
- * Dispatches parallel requests for Spotify and YouTube Music.
- * Uses a priority loop for YouTube Music to favor native tracks over video fallback.
- * @param {string} title - Song title.
- * @param {string} artist - Artist name.
- * @param {string} album - Optional album name for better query targeting.
- */
-async function fetchTinyfish(title, artist, album = '') {
-  const out = {};
-
-  const knownArtist = (artist && artist !== 'Unknown') ? artist : '';
-  const qBase = title + (knownArtist ? ' ' + knownArtist : '');
-  const qYt = qBase + (album ? ' ' + album : '') + ' youtube music topic';
-
-  async function tfFetch(q, retry = true) {
-    const h = await getPoWHeaders();
-    const r = await fetch(`${TFAPI}?query=${enc(q)}`, { headers: h });
-    if (r.status === 401 && retry) {
-      challengeQueue.length = 0;
-      return tfFetch(q, false);
-    }
-    return r.ok ? r.json() : null;
-  }
-
-  try {
-    const [spRes, ytRes] = await Promise.allSettled([
-      tfFetch(qBase + ' spotify track'),
-      tfFetch(qYt)
-    ]);
-
-    if (spRes.status === 'fulfilled' && spRes.value?.results) {
-      for (const r of spRes.value.results) {
-        if (r.url.includes('open.spotify.com/track')) {
-          out.spotify = r.url; break;
-        }
-      }
-    }
-
-    if (ytRes.status === 'fulfilled' && ytRes.value?.results) {
-      let bestUrl = null;
-      let maxScore = -1;
-
-      ytRes.value.results.forEach((r, i) => {
-        // Strict domain and track filter (removes playlists and 'site embeds')
-        const isYt = r.url.includes('youtube.com/watch') || r.url.includes('music.youtube.com/watch');
-        if (!isYt || r.url.includes('list=')) return;
-
-        // Base score starts with rank (higher rank = higher base)
-        let score = 20 - i;
-
-        // Massive boost for native music domain
-        if (r.url.includes('music.youtube.com')) score += 30;
-
-        // Boost for clean title matches (ignores "Official Video" fluff)
-        const rTitle = r.title.toLowerCase().trim();
-        const tTitle = title.toLowerCase().trim();
-
-        if (rTitle === tTitle) score += 40;
-        else if (rTitle.includes(tTitle)) score += 10;
-
-        // Cleanliness Bonus: Topic tracks usually have shorter, cleaner titles
-        const lengthDiff = Math.abs(r.title.length - title.length);
-        if (lengthDiff < 5) score += 20;
-
-        if (score > maxScore) {
-          maxScore = score;
-          bestUrl = r.url;
-        }
-      });
-
-      if (bestUrl) {
-        out.youtubeMusic = bestUrl.replace('www.youtube.com', 'music.youtube.com');
-      }
-    }
-  } catch (e) {
-    console.error('TinyFish error:', e);
-  }
-
-  return out;
-}
-
-/**
- * Creates a styled UI row for a streaming platform.
- * Includes 'Copy Link' functionality with visual feedback.
- * @param {object} p - Platform definition object.
- * @param {string} href - Target URL.
- */
 function makeRow(p, href) {
   const row = document.createElement('div');
   row.className = 'prow';
-
   const a = document.createElement('a');
-  a.className = 'plink'; a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
-
-  const icon = document.createElement('div');
-  icon.className = 'picon';
-  icon.style.background = p.bg;
-  icon.innerHTML = `<svg viewBox="${p.viewBox || '0 0 24 24'}" fill="${p.fg}" xmlns="http://www.w3.org/2000/svg">${p.svg}</svg>`;
-
-  const name = document.createElement('span');
-  name.className = 'pname'; name.textContent = p.name;
-
-  a.append(icon, name);
+  a.className = 'plink';
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.innerHTML = `<div class="picon" style="background:${p.color}">${p.icon}</div><span class="pname">${p.name}</span><span class="pbadge">PLAY</span>`;
+  a.addEventListener('mouseenter', () => a.querySelector('.pbadge').classList.add('show'));
+  a.addEventListener('mouseleave', () => a.querySelector('.pbadge').classList.remove('show'));
 
   const btn = document.createElement('button');
   btn.className = 'copy-btn';
-  btn.title = 'Copy link';
-  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy`;
-
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Copy`;
   btn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(href);
-      btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied`;
+      const old = btn.innerHTML;
+      btn.innerHTML = 'Copied!';
       btn.classList.add('copied');
-      setTimeout(() => {
-        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy`;
-        btn.classList.remove('copied');
-      }, 1800);
-    } catch (_) { }
+      setTimeout(() => { btn.innerHTML = old; btn.classList.remove('copied'); }, 2000);
+    } catch (e) { }
   });
-
   row.append(a, btn);
   return row;
 }
 
-/** Toggles loading states across UI components. */
 function setLoad(on) {
   if (on && typeof audio !== 'undefined') { try { audio.pause(); } catch (e) { } }
-  // Only show the global spinner if the card isn't already visible
-  if (on && cardEl.style.display !== 'block') {
-    loaderEl.style.display = 'block';
-  } else {
-    loaderEl.style.display = 'none';
-  }
+  if (on && cardEl.style.display !== 'block') loaderEl.style.display = 'block';
+  else loaderEl.style.display = 'none';
   if (on) errEl.style.display = 'none';
 }
 
-/** Displays error messages to the user. */
 function showErr(msg) { errEl.textContent = msg; errEl.style.display = 'block'; loaderEl.style.display = 'none'; }
-
-/** URL safe encoder. */
 function enc(s) { return encodeURIComponent(s); }
-
-/** HTML escaper to prevent XSS on user-controlled metadata. */
 function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-/**
- * Rotates the search placeholder text.
- * Occurs only when the input is empty and not focused to prevent disruption.
- */
 let phIdx = 1;
 setInterval(() => {
   if (document.activeElement !== qEl && qEl.value === '') {
@@ -922,5 +523,5 @@ setInterval(() => {
 
 if (PROXY_URL) {
   fetchAndSolveChallenge();
-  fetchAndSolveChallenge(); // Warm 2 parallel slots
+  fetchAndSolveChallenge();
 }
