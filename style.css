@@ -325,6 +325,13 @@ header p {
 .prow.skeleton .pname { height: 0.9rem; width: 80px; background: rgba(255,255,255,0.05); border-radius: 4px; }
 .prow.skeleton .copy-btn { height: 28px; width: 60px; background: rgba(255,255,255,0.05); border-radius: 6px; border: none; }
 
+.share-card-btn.skeleton {
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: transparent;
+  color: transparent;
+}
+
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(8px) }
   to   { opacity: 1; transform: translateY(0) }

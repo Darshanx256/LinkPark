@@ -336,7 +336,6 @@ qEl.addEventListener('input', () => {
   const v = qEl.value.trim();
   closeDD();
   errEl.style.display = 'none';
-  cardEl.style.display = 'none'; // Instant card drop on new input
   if (v.length < 2 || v !== `${currentData?.t} — ${currentData?.a}`) {
     const url = new URL(window.location.href);
     if (url.searchParams.has('s')) {
@@ -668,10 +667,15 @@ function populateUI(title, artist, art, preview, links) {
   const pWrap = document.getElementById('playerWrap');
   if (preview) {
     pWrap.style.display = 'flex';
-    audio.src = preview;
-    audio.load();
-    document.getElementById('seekFill').style.width = '0%';
-    document.getElementById('timeLabel').textContent = '0:00';
+    // Only reset audio if the source has actually changed to prevent freezing
+    const currentSrc = audio.src.split('?')[0]; // Ignore cache busters
+    const nextSrc = preview.split('?')[0];
+    if (currentSrc !== nextSrc) {
+      audio.src = preview;
+      audio.load();
+      document.getElementById('seekFill').style.width = '0%';
+      document.getElementById('timeLabel').textContent = '0:00';
+    }
   } else {
     pWrap.style.display = 'none';
     audio.pause();
@@ -679,7 +683,9 @@ function populateUI(title, artist, art, preview, links) {
 
   linksEl.innerHTML = '';
   
-  if (!links) {
+    const shareBtn = document.getElementById('shareCardBtn');
+    if (shareBtn) shareBtn.classList.add('skeleton');
+
     // Generate Skeletons
     for (let i = 0; i < 5; i++) {
       const row = document.createElement('div');
@@ -695,6 +701,9 @@ function populateUI(title, artist, art, preview, links) {
     }
     return;
   }
+
+  const shareBtn = document.getElementById('shareCardBtn');
+  if (shareBtn) shareBtn.classList.remove('skeleton');
 
   P.forEach(p => {
     let href = links[p.id]; if (!href) return;
