@@ -298,6 +298,33 @@ header p {
   animation: fadeUp 0.25s ease;
 }
 
+/* ─── Skeleton Loading ─── */
+.skeleton {
+  background: rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0) 100%);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+
+.card-title.skeleton { height: 1.1rem; width: 60%; margin: 0.2rem 0 0.5rem; }
+.card-artist.skeleton { height: 0.8rem; width: 40%; }
+.card-art.skeleton { background: rgba(255, 255, 255, 0.05); box-shadow: none; }
+
+.prow.skeleton { pointer-events: none; }
+.prow.skeleton .picon { background: rgba(255,255,255,0.05) !important; }
+.prow.skeleton .pname { height: 0.9rem; width: 80px; background: rgba(255,255,255,0.05); border-radius: 4px; }
+.prow.skeleton .copy-btn { height: 28px; width: 60px; background: rgba(255,255,255,0.05); border-radius: 6px; border: none; }
+
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(8px) }
   to   { opacity: 1; transform: translateY(0) }

@@ -469,11 +469,19 @@ document.getElementById('searchForm')?.addEventListener('submit', e => {
  */
 async function resolve(data) {
   const myId = ++lastResolveId;
+  let item = typeof data === 'object' ? data : null;
+
+  // Instant Feedback: Show card with skeleton or partial data immediately
+  if (item) {
+    populateUI(item.title, item.artist, item.thumb.replace('100x100bb', '600x600bb'), item.previewUrl, null);
+  } else {
+    populateUI('', '', '', null, null);
+  }
+  cardEl.style.display = 'block';
   setLoad(true);
-  linksEl.innerHTML = '';
 
   try {
-    let od, tf = {}, item = data;
+    let od, tf = {};
 
     const getItunesId = (o) => {
       const am = o?.linksByPlatform?.appleMusic;
@@ -630,12 +638,32 @@ async function resolve(data) {
  */
 function populateUI(title, artist, art, preview, links) {
   const artEl = document.getElementById('art');
-  artEl.src = art || '';
-  artEl.alt = art ? `${title} — ${artist} album artwork` : '';
-  document.getElementById('ctitle').textContent = title;
-  const artistEl = document.getElementById('cartist');
-  artistEl.textContent = artist;
-  artistEl.classList.toggle('lp-easter', artist.trim().toLowerCase().includes('linkin park'));
+  const ctitleEl = document.getElementById('ctitle');
+  const cartistEl = document.getElementById('cartist');
+
+  // Artwork Fallback & Skeleton
+  if (!art && !title) {
+    artEl.src = '';
+    artEl.classList.add('skeleton');
+  } else {
+    artEl.classList.remove('skeleton');
+    artEl.src = art || 'assets/logo.webp';
+  }
+  artEl.alt = title ? `${title} — ${artist} album artwork` : '';
+
+  // Title/Artist Skeletons
+  if (!title) {
+    ctitleEl.textContent = '';
+    ctitleEl.classList.add('skeleton');
+    cartistEl.textContent = '';
+    cartistEl.classList.add('skeleton');
+  } else {
+    ctitleEl.classList.remove('skeleton');
+    ctitleEl.textContent = title;
+    cartistEl.classList.remove('skeleton');
+    cartistEl.textContent = artist;
+    cartistEl.classList.toggle('lp-easter', artist.trim().toLowerCase().includes('linkin park'));
+  }
 
   const pWrap = document.getElementById('playerWrap');
   if (preview) {
@@ -650,6 +678,24 @@ function populateUI(title, artist, art, preview, links) {
   }
 
   linksEl.innerHTML = '';
+  
+  if (!links) {
+    // Generate Skeletons
+    for (let i = 0; i < 5; i++) {
+      const row = document.createElement('div');
+      row.className = 'prow skeleton';
+      row.innerHTML = `
+        <div class="plink">
+          <div class="picon"></div>
+          <span class="pname"></span>
+        </div>
+        <div class="copy-btn"></div>
+      `;
+      linksEl.append(row);
+    }
+    return;
+  }
+
   P.forEach(p => {
     let href = links[p.id]; if (!href) return;
     try {
@@ -809,8 +855,13 @@ function makeRow(p, href) {
 /** Toggles loading states across UI components. */
 function setLoad(on) {
   if (on && typeof audio !== 'undefined') { try { audio.pause(); } catch (e) { } }
-  loaderEl.style.display = on ? 'block' : 'none';
-  if (on) { cardEl.style.display = 'none'; errEl.style.display = 'none'; }
+  // Only show the global spinner if the card isn't already visible
+  if (on && cardEl.style.display !== 'block') {
+    loaderEl.style.display = 'block';
+  } else {
+    loaderEl.style.display = 'none';
+  }
+  if (on) errEl.style.display = 'none';
 }
 
 /** Displays error messages to the user. */
