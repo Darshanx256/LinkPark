@@ -347,17 +347,35 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
     if (r) links.youtubeMusic = (r?.url || '').replace(/^(https?:\/\/)?(www\.)?youtube\.com/, '$1music.youtube.com');
   }
 
-  // Priority 3: iTunes cleanup and preview (especially for URL drops)
+  // Priority 3: iTunes cleanup (especially for URL drops)
   const itTrack = itRes?.results?.[0];
   if (itTrack) {
     if (!links.appleMusic) links.appleMusic = itTrack.trackViewUrl;
+  }
+
+  // 3. Double-Dip Strategy: If we found a high-quality link (Spotify/Apple) that Odesli missed,
+  // re-query Odesli with that link to get all remaining platforms (Tidal, Deezer, etc.)
+  const discoveredLink = links.appleMusic || links.spotify;
+  const originalHadFullLinks = od?.linksByPlatform?.spotify || od?.linksByPlatform?.appleMusic;
+
+  if (discoveredLink && !originalHadFullLinks) {
+    const secondOd = await resolveOdesli(discoveredLink, country);
+    if (secondOd) {
+      platforms.forEach(pid => {
+        const href = secondOd.linksByPlatform?.[pid]?.url;
+        if (href && !links[pid]) links[pid] = href;
+      });
+      // Update metadata if second Odesli has better data
+      const secondEnt = secondOd.entitiesByUniqueId?.[secondOd.entityUniqueId] || {};
+      if (secondEnt.title && !ent.title) ent = secondEnt;
+    }
   }
 
   res.json({
     links,
     title: ent.title || itTrack?.trackName || null,
     artist: ent.artistName || itTrack?.artistName || null,
-    art: ent.thumbnailUrl || itTrack?.artworkUrl100?.replace('100x100bb', '600x600bb') || null,
+    art: itTrack?.artworkUrl100?.replace('100x100bb', '600x600bb') || ent.thumbnailUrl || null,
     preview: itTrack?.previewUrl || null
   });
 });
