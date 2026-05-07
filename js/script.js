@@ -37,8 +37,9 @@ function waitForTurnstile() {
 }
 
 async function getTurnstileToken() {
-  // Prevent parallel execution of the Turnstile challenge
+  console.log('[Auth] Starting Turnstile challenge...');
   if (isTurnstileExecuting) {
+    console.log('[Auth] Turnstile already executing, waiting...');
     await new Promise(r => setTimeout(r, 500));
     return getTurnstileToken();
   }
@@ -51,71 +52,89 @@ async function getTurnstileToken() {
 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
+      console.error('[Auth] Turnstile timed out after 15s');
       isTurnstileExecuting = false;
       reject(new Error('Turnstile timed out'));
     }, 15000);
 
     const finish = (token) => {
+      console.log('[Auth] Turnstile challenge successful! Token acquired.');
       isTurnstileExecuting = false;
       clearTimeout(timeout);
       resolve(token);
     };
 
     const onError = () => {
+      console.error('[Auth] Turnstile challenge failed (error-callback)');
       isTurnstileExecuting = false;
       clearTimeout(timeout);
       reject(new Error('Turnstile challenge failed'));
     };
 
     if (turnstileWidgetId === null) {
-      // Default behavior: render() will auto-execute the invisible challenge.
-      // We do NOT manually call execute() here, avoiding the iframe initialization race condition.
+      console.log('[Auth] Rendering new Turnstile widget...');
       turnstileWidgetId = turnstile.render(container, {
         sitekey: TURNSTILE_SITE_KEY,
         size: 'invisible',
         callback: finish,
         'error-callback': onError,
         'expired-callback': () => {
+          console.warn('[Auth] Turnstile token expired');
           isTurnstileExecuting = false;
           if (turnstileWidgetId !== null) turnstile.reset(turnstileWidgetId);
         }
       });
     } else {
-      // Widget already exists and iframe is fully loaded.
-      // Reset clears the old token, then we manually trigger a new challenge.
+      console.log('[Auth] Resetting and executing existing Turnstile widget...');
       turnstile.reset(turnstileWidgetId);
       turnstile.execute(turnstileWidgetId);
     }
   });
 }
 
-
 async function getProxySession() {
   if (!PROXY_SESSION_API) return null;
 
   const now = Date.now();
-  if (proxySession && proxySession.expiresAt - now > 30000) return proxySession.token;
-  if (proxySessionPromise) return proxySessionPromise;
+  if (proxySession && proxySession.expiresAt - now > 30000) {
+    console.log('[Auth] Using cached proxy session');
+    return proxySession.token;
+  }
+  if (proxySessionPromise) {
+    console.log('[Auth] Waiting for existing proxy session request...');
+    return proxySessionPromise;
+  }
 
+  console.log('[Auth] Requesting new proxy session...');
   proxySessionPromise = (async () => {
     try {
       const turnstileToken = await getTurnstileToken();
+      console.log('[Auth] Sending token to proxy backend...');
       const response = await fetch(PROXY_SESSION_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ turnstileToken })
       });
 
-      if (!response.ok) throw new Error(`proxy session ${response.status}`);
+      if (!response.ok) {
+        console.error(`[Auth] Proxy backend rejected session: ${response.status}`);
+        throw new Error(`proxy session ${response.status}`);
+      }
+      
       const data = await response.json();
-      if (!data.token || !data.expiresIn) throw new Error('proxy session response was invalid');
+      if (!data.token || !data.expiresIn) {
+        console.error('[Auth] Proxy backend returned invalid data format');
+        throw new Error('proxy session response was invalid');
+      }
 
+      console.log('[Auth] Proxy session established successfully!');
       proxySession = {
         token: data.token,
         expiresAt: Date.now() + (data.expiresIn * 1000)
       };
       return proxySession.token;
     } catch (err) {
+      console.error('[Auth] Proxy session request failed:', err.message);
       proxySessionPromise = null; // reset so next search can retry cleanly
       throw err;
     }
