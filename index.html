@@ -27,6 +27,7 @@
   <link rel="preconnect" href="https://itunes.apple.com">
   <link rel="stylesheet" href="style.css">
   <script src="config.js" onerror="console.log('No local config.js found')"></script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 
 <body>
@@ -82,6 +83,7 @@
 
   </div>
 
+  <div id="turnstileWidget" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden" aria-hidden="true"></div>
   <script src="js/script.js"></script>
 </body>
 

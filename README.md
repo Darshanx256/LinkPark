@@ -28,7 +28,13 @@ If you want to host everything in one place (like on Render, Vercel, or a VPS), 
 You can keep the frontend on GitHub Pages and host the proxy elsewhere.
 - **Setup**: 
   - Deploy the `server.js` to a service like Vercel or Render.
-  - Add `TFKEY` and `SERVICE` (your GitHub Pages URL) to that service's environment variables.
+  - Add `TFKEY`, `SERVICE`, `TURNSTILE_SECRET_KEY`, and `PROXY_SESSION_SECRET` to that service's environment variables.
+  - Set `SERVICE` to a comma-separated list of frontend origins that may use the proxy, for example `https://your-site.example,https://your-user.github.io`.
+  - Optional proxy tuning envs: `PROXY_TOKEN_TTL_SECONDS`, `SESSION_RATE_LIMIT_WINDOW_MS`, `SESSION_RATE_LIMIT_MAX`, `API_RATE_LIMIT_WINDOW_MS`, and `API_RATE_LIMIT_MAX`.
+  - Add your public Cloudflare Turnstile site key to the frontend config:
+    ```javascript
+    window.LINKPARK_CONFIG = { TURNSTILE_SITE_KEY: "your_public_site_key" };
+    ```
   - Set `PROXY = 'https://your-proxy-url.com/api/search'` in `index.html` and push.
 - This is great if you want to keep the "static" feel of GitHub Pages but still want a secure key.
 
