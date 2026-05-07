@@ -263,25 +263,41 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
 
 app.get('/api/resolve', requireApiAccess, async (req, res) => {
   const { query, u, artist, album, country } = req.query;
-  const tasks = [];
-
+  
   let od = null;
-  if (u) tasks.push(resolveOdesli(u, country).then(d => od = d));
-
   let tfSp = null, tfYt = null;
-  if (query) {
-    const qBase = query + (artist ? ' ' + artist : '');
-    const qSpot = qBase + ' spotify track';
-    const qYt = qBase + (album ? ' ' + album : '') + ' youtube music topic';
-    tasks.push(resolveSearch(qSpot).then(d => tfSp = d));
-    tasks.push(resolveSearch(qYt).then(d => tfYt = d));
+  const initialTasks = [];
+
+  // 1. Start Odesli resolution if a URL was provided
+  if (u) {
+    initialTasks.push(resolveOdesli(u, country).then(d => od = d));
   }
 
-  await Promise.allSettled(tasks);
+  // 2. Start early Tinyfish resolution if a query was provided
+  if (query) {
+    const qBase = query + (artist ? ' ' + artist : '');
+    initialTasks.push(resolveSearch(qBase + ' spotify track').then(d => tfSp = d));
+    initialTasks.push(resolveSearch(qBase + (album ? ' ' + album : '') + ' youtube music topic').then(d => tfYt = d));
+  }
+
+  // Wait for initial batch
+  await Promise.allSettled(initialTasks);
+
+  // 3. Late Metadata Fallback: If we dropped a URL (no query) or if early searches missed,
+  // use Odesli's discovered metadata to trigger a more accurate search.
+  const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
+  if (ent.title && (!tfSp || !tfYt)) {
+    const qMeta = `${ent.title} ${ent.artistName || ''}`;
+    const fallbackTasks = [];
+    if (!tfSp) fallbackTasks.push(resolveSearch(qMeta + ' spotify track').then(d => tfSp = d));
+    if (!tfYt) fallbackTasks.push(resolveSearch(qMeta + ' youtube music topic').then(d => tfYt = d));
+    if (fallbackTasks.length > 0) await Promise.allSettled(fallbackTasks);
+  }
 
   const links = {};
   const platforms = ['spotify', 'youtubeMusic', 'appleMusic', 'youtube', 'amazonMusic', 'tidal', 'deezer', 'pandora'];
 
+  // Priority 1: Odesli native links
   platforms.forEach(pid => {
     let href = od?.linksByPlatform?.[pid]?.url;
     if (!href && pid === 'youtubeMusic') {
@@ -293,6 +309,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
     if (href) links[pid] = href;
   });
 
+  // Priority 2: Tinyfish search results (supplemental)
   if (!links.spotify && tfSp?.results) {
     const r = tfSp.results.find(it => it.url.includes('open.spotify.com/track'));
     if (r) links.spotify = r.url;
@@ -302,7 +319,6 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
     if (r) links.youtubeMusic = (r?.url || '').replace(/^(https?:\/\/)?(www\.)?youtube\.com/, '$1music.youtube.com');
   }
 
-  const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
   res.json({
     links,
     title: ent.title || null,

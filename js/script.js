@@ -377,6 +377,7 @@ async function resolve(data) {
       return r.ok ? r.json() : null;
     };
 
+    // Parallel attempt 1: Get server resolution and initial iTunes lookup
     const [resolved, itunesData] = await Promise.allSettled([
       fetchResolve(),
       (!item || !item.previewUrl) ? fetch(`https://itunes.apple.com/search?term=${enc(q || u)}&entity=song&limit=1&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
@@ -384,24 +385,37 @@ async function resolve(data) {
 
     if (myId !== lastResolveId) return;
     const res = (resolved.status === 'fulfilled') ? resolved.value : null;
-    const it = (itunesData.status === 'fulfilled') ? itunesData.value : null;
+    let it = (itunesData.status === 'fulfilled') ? itunesData.value : null;
 
+    if (!res) { showErr('Failed to resolve song links.'); return; }
     if (!item) item = { title: '', artist: '', art: '', previewUrl: null };
+
+    // Metadata Bridge: If initial iTunes lookup failed (likely for URL drops), 
+    // re-try using the metadata Odesli just found for us.
+    if ((!it || !it.results?.length) && res.title) {
+       try {
+         const term = `${res.title} ${res.artist}`;
+         const r = await fetch(`https://itunes.apple.com/search?term=${enc(term)}&entity=song&limit=1&country=${COUNTRY}`);
+         it = await r.json();
+       } catch (e) { }
+    }
+
     if (it?.results?.[0]) {
       const r = it.results[0];
       if (!item.previewUrl) item.previewUrl = r.previewUrl;
       if (!item.art) item.art = r.artworkUrl100.replace('100x100bb', '600x600bb');
       if (!item.title) item.title = r.trackName;
       if (!item.artist) item.artist = r.artistName;
-      if (!item.appleUrl) item.appleUrl = r.trackViewUrl;
+      if (!res.links.appleMusic) res.links.appleMusic = r.trackViewUrl;
     }
 
-    if (res) {
-      populateUI(res.title || item.title, res.artist || item.artist, res.art || item.art, item.previewUrl, res.links);
-      currentData = { t: res.title || item.title, a: res.artist || item.artist, itunesId: null, l: res.links };
-    } else {
-      showErr('Failed to resolve song links. Please try again.');
-    }
+    const finalT = res.title || item.title;
+    const finalA = res.artist || item.artist;
+    const finalArt = item.art || res.art;
+
+    populateUI(finalT, finalA, finalArt, item.previewUrl, res.links);
+    currentData = { t: finalT, a: finalA, itunesId: null, l: res.links };
+
   } catch (e) {
     console.error('Resolve failed:', e);
     if (myId === lastResolveId) showErr('Network error. Check your connection.');
