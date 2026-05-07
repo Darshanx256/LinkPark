@@ -10,7 +10,7 @@ import {
 let lastResolveId = 0;
 let currentData = null; // Stores currently resolved track for sharing
 
-const challengeQueue = [];
+const challengeQueue = []; // Array of { promise, ts }
 
 async function solvePoW(seed, difficulty) {
   const target = '0'.repeat(difficulty);
@@ -36,6 +36,7 @@ async function solvePoW(seed, difficulty) {
 function fetchAndSolveChallenge() {
   if (!PROXY_URL) return;
   
+  const ts = Date.now();
   const promise = (async () => {
     try {
       const res = await fetch(`${PROXY_URL}/api/challenge`);
@@ -43,28 +44,36 @@ function fetchAndSolveChallenge() {
       const { seed, difficulty } = await res.json();
       
       const nonce = await solvePoW(seed, difficulty);
-      return { seed, nonce };
+      return { seed, nonce, ts };
     } catch (e) {
       console.error('PoW challenge failed:', e);
-      // Remove failed promise from queue to allow retry
-      const idx = challengeQueue.indexOf(promise);
+      // Remove failed promise from queue
+      const idx = challengeQueue.findIndex(item => item.promise === promise);
       if (idx > -1) challengeQueue.splice(idx, 1);
       await new Promise(r => setTimeout(r, 2000));
       throw e;
     }
   })();
   
-  challengeQueue.push(promise);
+  challengeQueue.push({ promise, ts });
 }
 
 async function getPoWHeaders() {
   if (!PROXY_URL) return { 'X-API-Key': TFKEY };
 
+  const now = Date.now();
+  // Discard challenges older than 90 seconds (server expires them at 120s)
+  while (challengeQueue.length > 0 && (now - challengeQueue[0].ts > 90000)) {
+    challengeQueue.shift();
+  }
+
   if (challengeQueue.length === 0) fetchAndSolveChallenge();
   
   try {
-    const pow = await challengeQueue.shift();
-    // Maintain a small pool of pre-solved challenges
+    const { promise } = challengeQueue.shift();
+    const pow = await promise;
+    
+    // Top up the pool
     if (challengeQueue.length < 2) fetchAndSolveChallenge();
     
     return {
@@ -72,6 +81,7 @@ async function getPoWHeaders() {
       'X-LP-Nonce': pow.nonce.toString()
     };
   } catch (e) {
+    // If the shifted promise failed, retry with next available
     if (challengeQueue.length > 0) return getPoWHeaders();
     return {};
   }
