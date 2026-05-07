@@ -52,10 +52,10 @@ async function getTurnstileToken() {
 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      console.error('[Auth] Turnstile timed out after 15s');
+      console.error('[Auth] Turnstile timed out after 60s');
       isTurnstileExecuting = false;
       reject(new Error('Turnstile timed out'));
-    }, 15000);
+    }, 60000);
 
     const finish = (token) => {
       console.log('[Auth] Turnstile challenge successful! Token acquired.');
