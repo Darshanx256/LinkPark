@@ -162,11 +162,13 @@ function requireApiAccess(req, res, next) {
 
 /** Internal resolution helpers */
 async function resolveOdesli(url, country = 'US') {
-  const cacheKey = `od:${url}:${country}`;
+  // Normalize YouTube Music URLs back to standard YouTube for Odesli's engine
+  const targetUrl = url.replace('music.youtube.com', 'youtube.com');
+  const cacheKey = `od:${targetUrl}:${country}`;
   const cached = cacheGet(cacheKey);
   if (cached) return JSON.parse(cached);
 
-  const target = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}&userCountry=${country}`;
+  const target = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(targetUrl)}&userCountry=${country}`;
   
   // 'Pro-Proxy' Strategy: Race multiple providers simultaneously to ensure near-zero latency.
   const providers = [
