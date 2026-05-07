@@ -61,28 +61,36 @@ async function getTurnstileToken() {
       resolve(token);
     };
 
+    const onError = () => {
+      isTurnstileExecuting = false;
+      clearTimeout(timeout);
+      reject(new Error('Turnstile challenge failed'));
+    };
+
     if (turnstileWidgetId === null) {
+      // Use execution:'execute' so render() does NOT auto-fire.
+      // We then manually call execute() once the widget is fully set up.
       turnstileWidgetId = turnstile.render(container, {
         sitekey: TURNSTILE_SITE_KEY,
         size: 'invisible',
+        execution: 'execute',
         callback: finish,
-        'error-callback': () => {
-          isTurnstileExecuting = false;
-          clearTimeout(timeout);
-          reject(new Error('Turnstile challenge failed'));
-        },
+        'error-callback': onError,
         'expired-callback': () => {
           isTurnstileExecuting = false;
           if (turnstileWidgetId !== null) turnstile.reset(turnstileWidgetId);
         }
       });
+      // Defer execute() slightly to ensure the widget iframe is mounted
+      setTimeout(() => turnstile.execute(turnstileWidgetId), 50);
     } else {
+      // Widget already exists — reset it, then execute once reset is done
       turnstile.reset(turnstileWidgetId);
+      setTimeout(() => turnstile.execute(turnstileWidgetId), 50);
     }
-
-    turnstile.execute(turnstileWidgetId);
   });
 }
+
 
 async function getProxySession() {
   if (!PROXY_SESSION_API) return null;
@@ -109,10 +117,9 @@ async function getProxySession() {
         expiresAt: Date.now() + (data.expiresIn * 1000)
       };
       return proxySession.token;
-    } finally {
-      // Clear the promise after a short delay to allow concurrent requests to finish
-      // but ensure a fresh attempt on the next user action if needed.
-      setTimeout(() => { proxySessionPromise = null; }, 1000);
+    } catch (err) {
+      proxySessionPromise = null; // reset so next search can retry cleanly
+      throw err;
     }
   })();
 
