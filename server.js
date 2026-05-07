@@ -435,5 +435,5 @@ if (ALLOWED_ORIGINS.length > 0) {
 }
 
 app.listen(PORT, () => {
-  console.log(`LinkPark is live on port ${PORT} | Keys loaded: ${TFKEYS.length} | Cache limit: ${CACHE_LIMIT} entries`);
+  console.log(`LinkPark is live on port ${PORT} | Keys loaded: ${TFKEYS.length} | Cache limit: ${cache.maxSize} entries`);
 });
