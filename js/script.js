@@ -183,9 +183,10 @@ document.getElementById('seekWrap').addEventListener('click', (e) => {
 document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => {
   if (!currentData) return;
   const btn = e.currentTarget;
-  const currentUrl = new URL(window.location.href);
   const hash = await encodeShare(currentData);
-  const shareUrl = PROXY_URL ? new URL(`${PROXY_URL}/share`) : currentUrl;
+
+  // Use the frontend origin for sharing to keep the proxy endpoint private and secure.
+  const shareUrl = new URL(window.location.origin);
   shareUrl.searchParams.set('s', hash);
   try {
     await navigator.clipboard.writeText(shareUrl.toString());
@@ -476,23 +477,27 @@ function populateUI(title, artist, art, preview, links) {
   });
 }
 
+/**
+ * Creates a styled UI row for a streaming platform.
+ * @param {object} p - Platform definition object.
+ * @param {string} href - Target URL.
+ */
 function makeRow(p, href) {
   const row = document.createElement('div');
   row.className = 'prow';
+
   const a = document.createElement('a');
-  a.className = 'plink';
-  a.href = href;
-  a.target = '_blank';
-  a.rel = 'noopener';
-  a.innerHTML = `
-    <div class="picon" style="background:${p.bg};color:${p.fg}">
-      ${p.svg ? `<svg viewBox="${p.viewBox || '0 0 24 24'}">${p.svg}</svg>` : ''}
-    </div>
-    <span class="pname">${p.name}</span>
-    <span class="pbadge">PLAY</span>
-  `;
-  a.addEventListener('mouseenter', () => a.querySelector('.pbadge').classList.add('show'));
-  a.addEventListener('mouseleave', () => a.querySelector('.pbadge').classList.remove('show'));
+  a.className = 'plink'; a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+
+  const icon = document.createElement('div');
+  icon.className = 'picon';
+  icon.style.background = p.bg;
+  icon.innerHTML = `<svg viewBox="${p.viewBox || '0 0 24 24'}" fill="${p.fg}" xmlns="http://www.w3.org/2000/svg">${p.svg}</svg>`;
+
+  const name = document.createElement('span');
+  name.className = 'pname'; name.textContent = p.name;
+
+  a.append(icon, name);
 
   const btn = document.createElement('button');
   btn.className = 'copy-btn';
