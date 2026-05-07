@@ -373,8 +373,9 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
 
   res.json({
     links,
-    title: ent.title || itTrack?.trackName || null,
-    artist: ent.artistName || itTrack?.artistName || null,
+    title: itTrack?.trackName || ent.title || null,
+    artist: itTrack?.artistName || ent.artistName || null,
+    album: itTrack?.collectionName || null,
     art: itTrack?.artworkUrl100?.replace('100x100bb', '600x600bb') || ent.thumbnailUrl || null,
     preview: itTrack?.previewUrl || null
   });
