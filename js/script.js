@@ -421,8 +421,9 @@ function populateUI(title, artist, art, preview, links) {
   const artEl = document.getElementById('art');
   const ctitleEl = document.getElementById('ctitle');
   const cartistEl = document.getElementById('cartist');
+  const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
-  if (!art && !title) { artEl.src = ''; artEl.classList.add('skeleton'); }
+  if (!art && !title) { artEl.src = BLANK; artEl.classList.add('skeleton'); }
   else { artEl.classList.remove('skeleton'); artEl.src = art || 'assets/logo.webp'; }
   artEl.alt = title ? `${title} — ${artist} album artwork` : '';
 

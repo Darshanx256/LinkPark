@@ -300,7 +300,12 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
 
   // 2. Secondary Batch (Fallback/Supplemental)
   // If metadata was found via Odesli, use it to fill gaps in Tinyfish or get iTunes data for URL drops
-  const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
+  let ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
+  // Robustness Fallback: If primary entity lookup fails, grab the first available entity in the set
+  if (!ent.title && od?.entitiesByUniqueId) {
+    const firstId = Object.keys(od.entitiesByUniqueId)[0];
+    if (firstId) ent = od.entitiesByUniqueId[firstId];
+  }
   if (ent.title) {
     const qMeta = `${ent.title} ${ent.artistName || ''}`;
     const secondaryTasks = [];
