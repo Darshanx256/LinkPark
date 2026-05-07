@@ -1,16 +1,110 @@
 import { 
-  ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY, COUNTRY, 
-  SMAP, SREV, P, PLACEHOLDERS 
+  ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY, PROXY_SESSION_API, 
+  TURNSTILE_SITE_KEY, COUNTRY, SMAP, SREV, P, PLACEHOLDERS 
 } from './constants.js';
 
 /** 
  * Unique identifier for the current resolution request.
  * Used to discard results from stale network requests when a new search begins.
  */
-let lastResolveId = 0; 
+let lastResolveId = 0;
 let currentData = null; // Stores currently resolved track for sharing
+let proxySession = null;
+let proxySessionPromise = null;
+let turnstileWidgetId = null;
 
 
+
+function waitForTurnstile() {
+  return new Promise((resolve, reject) => {
+    if (!TURNSTILE_SITE_KEY) return reject(new Error('Turnstile site key is not configured'));
+    if (window.turnstile) return resolve(window.turnstile);
+
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts += 1;
+      if (window.turnstile) {
+        clearInterval(timer);
+        resolve(window.turnstile);
+      } else if (attempts > 100) {
+        clearInterval(timer);
+        reject(new Error('Turnstile failed to load'));
+      }
+    }, 100);
+  });
+}
+
+async function getTurnstileToken() {
+  const turnstile = await waitForTurnstile();
+  const container = document.getElementById('turnstileWidget');
+  if (!container) throw new Error('Turnstile container is missing');
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Turnstile timed out')), 15000);
+    const finish = (token) => {
+      clearTimeout(timeout);
+      resolve(token);
+    };
+
+    if (turnstileWidgetId === null) {
+      turnstileWidgetId = turnstile.render(container, {
+        sitekey: TURNSTILE_SITE_KEY,
+        size: 'invisible',
+        callback: finish,
+        'error-callback': () => {
+          clearTimeout(timeout);
+          reject(new Error('Turnstile challenge failed'));
+        },
+        'expired-callback': () => {
+          if (turnstileWidgetId !== null) turnstile.reset(turnstileWidgetId);
+        }
+      });
+    } else {
+      turnstile.reset(turnstileWidgetId);
+    }
+
+    turnstile.execute(turnstileWidgetId);
+  });
+}
+
+async function getProxySession() {
+  if (!PROXY_SESSION_API) return null;
+
+  const now = Date.now();
+  if (proxySession && proxySession.expiresAt - now > 30000) return proxySession.token;
+  if (proxySessionPromise) return proxySessionPromise;
+
+  proxySessionPromise = (async () => {
+    const turnstileToken = await getTurnstileToken();
+    const response = await fetch(PROXY_SESSION_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ turnstileToken })
+    });
+
+    if (!response.ok) throw new Error(`proxy session ${response.status}`);
+    const data = await response.json();
+    if (!data.token || !data.expiresIn) throw new Error('proxy session response was invalid');
+
+    proxySession = {
+      token: data.token,
+      expiresAt: Date.now() + (data.expiresIn * 1000)
+    };
+    return proxySession.token;
+  })();
+
+  try {
+    return await proxySessionPromise;
+  } finally {
+    proxySessionPromise = null;
+  }
+}
+
+async function getProxyHeaders() {
+  if (!PROXY_SESSION_API) return { 'X-API-Key': TFKEY };
+  const token = await getProxySession();
+  return { Authorization: `Bearer ${token}` };
+}
 
 /**
  * Advanced Compression & Encoding Engine.
@@ -39,7 +133,7 @@ async function encodeShare(d) {
   // Store only "Odesli-exclusive" or "Hard to find" IDs to save space.
   // Spotify and YT Music can be re-resolved via Tinyfish for free.
   const EXCLUSIVE = ['amazonMusic', 'tidal', 'deezer', 'pandora'];
-  
+
   for (const pid of EXCLUSIVE) {
     if (d.l[pid]) {
       const k = SREV[pid] || pid;
@@ -176,12 +270,12 @@ window.addEventListener('load', async () => {
     const data = await decodeShare(s);
     if (data) {
       setLoad(true);
-      
+
       // Background Resolution: Get high-res assets and links
       const myId = ++lastResolveId;
       try {
         let art = '', preview = '', appleUrl = '';
-        
+
         // 1. Fetch iTunes info (cheap, covers art, preview, apple link, album)
         let album = '';
         if (data.itunesId) {
@@ -198,7 +292,7 @@ window.addEventListener('load', async () => {
 
         // 2. Fetch Tinyfish (cheap, covers spotify, youtube)
         const tf = await fetchTinyfish(data.t, data.a, album).catch(() => ({}));
-        
+
         if (myId !== lastResolveId) return;
 
         // 3. Merge with Odesli links from share
@@ -210,7 +304,7 @@ window.addEventListener('load', async () => {
         // Only show everything once resolution is 100% complete
         populateUI(data.t, data.a, art, preview, merged);
         cardEl.style.display = 'block';
-      } catch (e) { 
+      } catch (e) {
         console.error('Hybrid resolve failed', e);
         // Fallback: at least show what we have if APIs fail
         populateUI(data.t, data.a, '', '', data.l);
@@ -254,11 +348,16 @@ function updatePlayBtn() {
 qEl.addEventListener('input', () => {
   clearTimeout(timer);
   const v = qEl.value.trim();
-  closeDD(); 
+  closeDD();
   errEl.style.display = 'none';
   cardEl.style.display = 'none'; // Instant card drop on new input
+<<<<<<< HEAD
   
   if (v.length < 2 || v !== `${currentData?.t} — ${currentData?.a}`) {
+=======
+
+  if (v.length < 2) {
+>>>>>>> feature/turnstile-security
     const url = new URL(window.location.href);
     if (url.searchParams.has('s')) {
       url.searchParams.delete('s');
@@ -280,7 +379,7 @@ qEl.addEventListener('input', () => {
     timer = setTimeout(() => resolve(url), 280);
     return;
   }
-  
+
   timer = setTimeout(() => suggest(v), 280);
 });
 
@@ -311,7 +410,7 @@ function renderDD(tracks) {
     previewUrl: t.previewUrl,
     album: t.collectionName || '',
   }));
-  
+
   ddEl.innerHTML = items.map((it, i) => `
     <div class="dd-item" data-i="${i}">
       <img src="${it.thumb}" loading="lazy" alt="${esc(it.title)} by ${esc(it.artist)}">
@@ -320,11 +419,11 @@ function renderDD(tracks) {
         <div class="dd-artist">${esc(it.artist)}</div>
       </div>
     </div>`).join('');
-    
-  ddEl.style.display = 'block'; 
-  hintEl.classList.add('on'); 
+
+  ddEl.style.display = 'block';
+  hintEl.classList.add('on');
   idx = -1;
-  
+
   ddEl.querySelectorAll('.dd-item').forEach(el => {
     el.addEventListener('mousedown', e => e.preventDefault());
     el.addEventListener('click', () => pick(+el.dataset.i));
@@ -360,7 +459,7 @@ document.addEventListener('click', e => { if (!e.target.closest('.search-wrap'))
 function pick(i) {
   const it = items[i]; if (!it) return;
   qEl.value = `${it.title} — ${it.artist}`;
-  closeDD(); 
+  closeDD();
   resolve(it);
 }
 
@@ -390,7 +489,7 @@ document.getElementById('searchForm')?.addEventListener('submit', e => {
  */
 async function resolve(data) {
   const myId = ++lastResolveId;
-  setLoad(true); 
+  setLoad(true);
   linksEl.innerHTML = '';
 
   try {
@@ -511,12 +610,12 @@ async function resolve(data) {
     });
 
     if (!links.spotify && tf.spotify) links.spotify = tf.spotify;
-    
+
     // Always prefer Tinyfish for YouTube Music if it found a native link
     if (tf.youtubeMusic) {
       links.youtubeMusic = tf.youtubeMusic;
     }
-    
+
     if (!links.appleMusic) {
       if (item.appleUrl) links.appleMusic = item.appleUrl;
       else if (typeof data === 'string' && data.includes('music.apple.com')) links.appleMusic = data;
@@ -588,18 +687,15 @@ function populateUI(title, artist, art, preview, links) {
 
 /**
  * Fetches platform links via Odesli.
- * Automatically falls back to corsproxy.io if no server proxy is configured.
+ * Uses the authenticated server proxy when configured.
  * @param {string} url - Target streaming URL.
  */
 async function fetchOdesli(url) {
-  try {
-    if (ODESLI_PROXY) {
-      const r = await fetch(`${ODESLI_PROXY}?url=${enc(url)}&userCountry=${COUNTRY}`);
-      if (r.ok) return await r.json();
-      console.warn(`Odesli proxy failed (${r.status}), falling back to direct client fetch.`);
-    }
-  } catch (e) {
-    console.warn('Odesli proxy error, falling back to direct client fetch.', e);
+  if (ODESLI_PROXY) {
+    const headers = await getProxyHeaders();
+    const r = await fetch(`${ODESLI_PROXY}?url=${enc(url)}&userCountry=${COUNTRY}`, { headers });
+    if (r.ok) return await r.json();
+    throw new Error(`odesli proxy ${r.status}`);
   }
 
   /** 
@@ -621,13 +717,17 @@ async function fetchOdesli(url) {
  * @param {string} album - Optional album name for better query targeting.
  */
 async function fetchTinyfish(title, artist, album = '') {
+<<<<<<< HEAD
   const headers = PROXY_URL ? {} : { 'X-API-Key': TFKEY };
+=======
+  const headers = await getProxyHeaders();
+>>>>>>> feature/turnstile-security
   const out = {};
 
   const knownArtist = (artist && artist !== 'Unknown') ? artist : '';
   const qBase = title + (knownArtist ? ' ' + knownArtist : '');
   const qYt = qBase + (album ? ' ' + album : '') + ' youtube music topic';
-  
+
   try {
     const [spRes, ytRes] = await Promise.allSettled([
       fetch(`${TFAPI}?query=${enc(qBase + ' spotify track')}`, { headers }).then(r => r.ok ? r.json() : null),
@@ -652,15 +752,15 @@ async function fetchTinyfish(title, artist, album = '') {
         if (!isYt || r.url.includes('list=')) return;
 
         // Base score starts with rank (higher rank = higher base)
-        let score = 20 - i; 
-        
+        let score = 20 - i;
+
         // Massive boost for native music domain
         if (r.url.includes('music.youtube.com')) score += 30;
 
         // Boost for clean title matches (ignores "Official Video" fluff)
         const rTitle = r.title.toLowerCase().trim();
         const tTitle = title.toLowerCase().trim();
-        
+
         if (rTitle === tTitle) score += 40;
         else if (rTitle.includes(tTitle)) score += 10;
 
@@ -718,9 +818,9 @@ function makeRow(p, href) {
       await navigator.clipboard.writeText(href);
       btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied`;
       btn.classList.add('copied');
-      setTimeout(() => { 
-        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy`; 
-        btn.classList.remove('copied'); 
+      setTimeout(() => {
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy`;
+        btn.classList.remove('copied');
       }, 1800);
     } catch (_) { }
   });
@@ -749,7 +849,12 @@ function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(
  * Rotates the search placeholder text.
  * Occurs only when the input is empty and not focused to prevent disruption.
  */
+<<<<<<< HEAD
 let phIdx = 1; 
+=======
+const ph = ['Type a few lyrics…', 'Search a song…', 'Drop a link…'];
+let phIdx = 1;
+>>>>>>> feature/turnstile-security
 setInterval(() => {
   if (document.activeElement !== qEl && qEl.value === '') {
     qEl.classList.add('ph-fade');

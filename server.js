@@ -2,9 +2,16 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const TOKEN_TTL_SECONDS = parsePositiveInt(process.env.PROXY_TOKEN_TTL_SECONDS, 300);
+const SESSION_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.SESSION_RATE_LIMIT_WINDOW_MS, 60 * 1000);
+const SESSION_RATE_LIMIT_MAX = parsePositiveInt(process.env.SESSION_RATE_LIMIT_MAX, 20);
+const API_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.API_RATE_LIMIT_WINDOW_MS, 60 * 1000);
+const API_RATE_LIMIT_MAX = parsePositiveInt(process.env.API_RATE_LIMIT_MAX, 120);
+const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
 /**
  * Parses up to 9 comma-separated API keys from the TFKEY environment variable.
@@ -65,11 +72,151 @@ setInterval(() => {
   if (swept) console.log(`[cache sweep] removed ${swept} expired entries, ${cache.size} remaining`);
 }, 6 * 60 * 60 * 1000).unref(); // .unref() so the timer never blocks process exit
 
+setInterval(() => {
+  sweepRateLimit(sessionLimit);
+  sweepRateLimit(apiLimit);
+}, 10 * 60 * 1000).unref();
+
 /**
  * Authorized origins for browser-based CORS requests.
  * Restricts access to the proxy server to specific frontend deployments.
  */
-const ALLOWED_ORIGINS = (process.env.SERVICE || '').split(',').map(s => s.trim()).filter(Boolean);
+const ALLOWED_ORIGINS = (process.env.SERVICE || '')
+  .split(',')
+  .map(normalizeAllowedOrigin)
+  .filter(Boolean);
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '';
+const PROXY_SESSION_SECRET = process.env.PROXY_SESSION_SECRET || '';
+const sessionLimit = new Map();
+const apiLimit = new Map();
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeAllowedOrigin(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  try {
+    return new URL(trimmed).origin;
+  } catch (_) {
+    console.warn(`Ignoring invalid SERVICE origin: ${trimmed}`);
+    return '';
+  }
+}
+
+function base64url(value) {
+  return Buffer.from(value).toString('base64url');
+}
+
+function signTokenPayload(payload) {
+  return crypto
+    .createHmac('sha256', PROXY_SESSION_SECRET)
+    .update(payload)
+    .digest('base64url');
+}
+
+function createProxyToken(origin) {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = base64url(JSON.stringify({
+    origin,
+    iat: now,
+    exp: now + TOKEN_TTL_SECONDS,
+    nonce: crypto.randomBytes(16).toString('base64url')
+  }));
+  return `${payload}.${signTokenPayload(payload)}`;
+}
+
+function verifyProxyToken(token, origin) {
+  if (!PROXY_SESSION_SECRET || !token || !token.includes('.')) return null;
+
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) return null;
+
+  const expected = signTokenPayload(payload);
+  const receivedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (receivedBuffer.length !== expectedBuffer.length) return null;
+  if (!crypto.timingSafeEqual(receivedBuffer, expectedBuffer)) return null;
+
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (data.origin !== origin) return null;
+    if (!Number.isFinite(data.exp) || data.exp <= Math.floor(Date.now() / 1000)) return null;
+    return data;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getClientIp(req) {
+  let clientIp = req.ip || '';
+  if (clientIp.startsWith('::ffff:')) clientIp = clientIp.replace('::ffff:', '');
+  return clientIp;
+}
+
+function isAllowedOrigin(origin) {
+  return Boolean(origin && ALLOWED_ORIGINS.includes(origin));
+}
+
+function deny(req, res, status, code) {
+  console.warn(`[deny] ${code} ${req.method} ${req.path} - IP: ${getClientIp(req)}`);
+  res.status(status).json({ error: code });
+}
+
+function consumeRateLimit(store, key, windowMs, max) {
+  const now = Date.now();
+  const current = store.get(key);
+  if (!current || now >= current.resetAt) {
+    store.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  current.count += 1;
+  return current.count <= max;
+}
+
+function sweepRateLimit(store) {
+  const now = Date.now();
+  for (const [key, entry] of store.entries()) {
+    if (now >= entry.resetAt) store.delete(key);
+  }
+}
+
+function hasCompatibleFetchMetadata(req) {
+  const site = req.get('sec-fetch-site');
+  const mode = req.get('sec-fetch-mode');
+  const dest = req.get('sec-fetch-dest');
+
+  if (site && !['same-origin', 'same-site', 'cross-site'].includes(site)) return false;
+  if (mode && !['cors', 'same-origin'].includes(mode)) return false;
+  if (dest && dest !== 'empty') return false;
+  return true;
+}
+
+function requireAllowedOrigin(req, res, next) {
+  if (isAllowedOrigin(req.get('origin'))) return next();
+  return deny(req, res, 403, 'blocked_origin');
+}
+
+function requireProxyAuth(req, res, next) {
+  const origin = req.get('origin');
+  if (!isAllowedOrigin(origin)) return deny(req, res, 403, 'blocked_origin');
+  if (!hasCompatibleFetchMetadata(req)) return deny(req, res, 403, 'blocked_fetch_metadata');
+
+  const auth = req.get('authorization') || '';
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  const tokenData = match ? verifyProxyToken(match[1], origin) : null;
+  if (!tokenData) return deny(req, res, 401, 'invalid_token');
+
+  const tokenKey = `${origin}:${tokenData.nonce || match[1].slice(0, 24)}:${getClientIp(req)}`;
+  if (!consumeRateLimit(apiLimit, tokenKey, API_RATE_LIMIT_WINDOW_MS, API_RATE_LIMIT_MAX)) {
+    return deny(req, res, 429, 'rate_limited');
+  }
+
+  req.proxySession = tokenData;
+  return next();
+}
 
 /**
  * Parses the IP_ALLOWLIST environment variable into a lookup array.
@@ -95,41 +242,80 @@ app.get('/health', (req, res) => res.status(200).send('OK'));
 
 /** Global request logger. */
 app.use((req, res, next) => {
-  let clientIp = req.ip || '';
-  if (clientIp.startsWith('::ffff:')) clientIp = clientIp.replace('::ffff:', '');
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - IP: ${clientIp}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - IP: ${getClientIp(req)}`);
   next();
 });
 
+app.use(express.json({ limit: '16kb' }));
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('CORS blocked: Origin not allowed'));
+      callback(null, false);
     }
-  }
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 /** IP allowlist guard for non-browser requests. */
 app.use((req, res, next) => {
   if (ALLOWED_IPS.length === 0) return next();
 
-  let clientIp = req.ip || '';
-  if (clientIp.startsWith('::ffff:')) clientIp = clientIp.replace('::ffff:', '');
+  const clientIp = getClientIp(req);
 
   if (ALLOWED_IPS.includes(clientIp) || clientIp === '127.0.0.1' || clientIp === '::1') return next();
-  if (req.headers.origin && ALLOWED_ORIGINS.includes(req.headers.origin)) return next();
+  if (isAllowedOrigin(req.get('origin'))) return next();
 
-  console.log(`Access denied for IP: ${clientIp}`);
-  res.status(403).json({ error: 'Access denied: IP not allowed', yourIp: clientIp });
+  return deny(req, res, 403, 'ip_not_allowed');
+});
+
+app.post('/api/session', requireAllowedOrigin, async (req, res) => {
+  const origin = req.get('origin');
+  if (!TURNSTILE_SECRET_KEY || !PROXY_SESSION_SECRET) {
+    return deny(req, res, 503, 'proxy_auth_not_configured');
+  }
+  if (!hasCompatibleFetchMetadata(req)) return deny(req, res, 403, 'blocked_fetch_metadata');
+
+  const limitKey = `${origin}:${getClientIp(req)}`;
+  if (!consumeRateLimit(sessionLimit, limitKey, SESSION_RATE_LIMIT_WINDOW_MS, SESSION_RATE_LIMIT_MAX)) {
+    return deny(req, res, 429, 'rate_limited');
+  }
+
+  const turnstileToken = req.body && req.body.turnstileToken;
+  if (!turnstileToken || typeof turnstileToken !== 'string') {
+    return deny(req, res, 400, 'missing_turnstile_token');
+  }
+
+  try {
+    const params = new URLSearchParams();
+    params.set('secret', TURNSTILE_SECRET_KEY);
+    params.set('response', turnstileToken);
+    params.set('remoteip', getClientIp(req));
+
+    const response = await fetch(TURNSTILE_VERIFY_URL, {
+      method: 'POST',
+      body: params
+    });
+    const result = await response.json();
+
+    if (!result.success) return deny(req, res, 401, 'turnstile_failed');
+
+    const token = createProxyToken(origin);
+    res.json({ token, expiresIn: TOKEN_TTL_SECONDS });
+  } catch (error) {
+    console.warn('Turnstile verification error:', error.message);
+    res.status(502).json({ error: 'turnstile_unavailable' });
+  }
 });
 
 /**
  * Odesli proxy with 48-hour caching.
  * Cache key is the normalized URL + country pair so regional variants are cached separately.
  */
-app.get('/api/odesli', async (req, res) => {
+app.get('/api/odesli', requireProxyAuth, async (req, res) => {
   const { url, userCountry } = req.query;
   if (!url) return res.status(400).json({ error: 'url is required' });
 
@@ -181,7 +367,7 @@ app.get('/api/odesli', async (req, res) => {
  * hit the Tinyfish API twice within the TTL window.
  * On a rate-limit (429) or server error, retries with a different random key.
  */
-app.get('/api/search', async (req, res) => {
+app.get('/api/search', requireProxyAuth, async (req, res) => {
   const { query } = req.query;
 
   if (!query) return res.status(400).json({ error: 'Query is required' });
@@ -220,7 +406,7 @@ app.get('/api/search', async (req, res) => {
 });
 
 /** Cache stats endpoint — useful for monitoring without exposing data. */
-app.get('/api/cache-stats', (req, res) => {
+app.get('/api/cache-stats', requireProxyAuth, (req, res) => {
   const now = Date.now();
   let active = 0;
   for (const entry of cache.values()) {

@@ -6,6 +6,8 @@ export const PROXY_URL = window.LINKPARK_CONFIG?.PROXY_URL || 'https://linkpark.
 export const TFKEY = window.LINKPARK_CONFIG?.TFKEY || 'YOUR_TINYFISH_API_KEY_HERE';
 export const TFAPI = PROXY_URL ? `${PROXY_URL}/api/search` : 'https://api.search.tinyfish.ai';
 export const ODESLI_PROXY = PROXY_URL ? `${PROXY_URL}/api/odesli` : '';
+export const PROXY_SESSION_API = PROXY_URL ? `${PROXY_URL}/api/session` : '';
+export const TURNSTILE_SITE_KEY = '0x4AAAAAADKyAHm3jNnp_4eT';
 export const COUNTRY = navigator.language.split('-')[1]?.toUpperCase() || 'US';
 
 /**
