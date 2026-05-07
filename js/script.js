@@ -754,7 +754,6 @@ async function fetchOdesli(url) {
  * @param {string} album - Optional album name for better query targeting.
  */
 async function fetchTinyfish(title, artist, album = '') {
-  const headers = await getPoWHeaders();
   const out = {};
 
   const knownArtist = (artist && artist !== 'Unknown') ? artist : '';
@@ -763,8 +762,12 @@ async function fetchTinyfish(title, artist, album = '') {
 
   try {
     const [spRes, ytRes] = await Promise.allSettled([
-      fetch(`${TFAPI}?query=${enc(qBase + ' spotify track')}`, { headers }).then(r => r.ok ? r.json() : null),
-      fetch(`${TFAPI}?query=${enc(qYt)}`, { headers }).then(r => r.ok ? r.json() : null)
+      getPoWHeaders().then(headers => 
+        fetch(`${TFAPI}?query=${enc(qBase + ' spotify track')}`, { headers }).then(r => r.ok ? r.json() : null)
+      ),
+      getPoWHeaders().then(headers => 
+        fetch(`${TFAPI}?query=${enc(qYt)}`, { headers }).then(r => r.ok ? r.json() : null)
+      )
     ]);
 
     if (spRes.status === 'fulfilled' && spRes.value?.results) {
