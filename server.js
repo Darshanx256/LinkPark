@@ -223,7 +223,7 @@ app.use(cors({
     }
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-LP-Nonce', 'X-LP-Seed']
 }));
 
 /** IP allowlist guard for non-browser requests. */
