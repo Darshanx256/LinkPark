@@ -10,9 +10,66 @@ import {
 let lastResolveId = 0;
 let currentData = null; // Stores currently resolved track for sharing
 
-async function getProxyHeaders() {
+let currentPoWPromise = null;
+
+async function solvePoW(seed, difficulty) {
+  const target = '0'.repeat(difficulty);
+  const encoder = new TextEncoder();
+  let nonce = 0;
+  
+  while (true) {
+    const data = encoder.encode(seed + nonce);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    // Convert bytes to hex string
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    if (hashHex.startsWith(target)) return nonce;
+    
+    nonce++;
+
+    // Yield to the event loop every 500 iterations to prevent UI freezing
+    if (nonce % 500 === 0) await new Promise(r => setTimeout(r, 0));
+  }
+}
+
+function fetchAndSolveChallenge() {
+  if (!PROXY_URL) return;
+  
+  currentPoWPromise = (async () => {
+    try {
+      const res = await fetch(`${PROXY_URL}/api/challenge`);
+      if (!res.ok) throw new Error('Challenge fetch failed');
+      const { seed, difficulty } = await res.json();
+      
+      const nonce = await solvePoW(seed, difficulty);
+      return { seed, nonce };
+    } catch (e) {
+      console.error('PoW challenge failed:', e);
+      await new Promise(r => setTimeout(r, 2000));
+      currentPoWPromise = null;
+      throw e;
+    }
+  })();
+}
+
+async function getPoWHeaders() {
   if (!PROXY_URL) return { 'X-API-Key': TFKEY };
-  return {};
+
+  if (!currentPoWPromise) fetchAndSolveChallenge();
+  
+  try {
+    const pow = await currentPoWPromise;
+    // Pre-warm the next challenge for the next search
+    fetchAndSolveChallenge();
+    return {
+      'X-LP-Seed': pow.seed,
+      'X-LP-Nonce': pow.nonce.toString()
+    };
+  } catch (e) {
+    // Fallback if proxy fails
+    return {};
+  }
 }
 
 /**
@@ -600,7 +657,7 @@ function populateUI(title, artist, art, preview, links) {
  */
 async function fetchOdesli(url) {
   if (ODESLI_PROXY) {
-    const headers = await getProxyHeaders();
+    const headers = await getPoWHeaders();
     const r = await fetch(`${ODESLI_PROXY}?url=${enc(url)}&userCountry=${COUNTRY}`, { headers });
     if (r.ok) return await r.json();
     throw new Error(`odesli proxy ${r.status}`);
@@ -625,7 +682,7 @@ async function fetchOdesli(url) {
  * @param {string} album - Optional album name for better query targeting.
  */
 async function fetchTinyfish(title, artist, album = '') {
-  const headers = await getProxyHeaders();
+  const headers = await getPoWHeaders();
   const out = {};
 
   const knownArtist = (artist && artist !== 'Unknown') ? artist : '';
@@ -764,3 +821,5 @@ setInterval(() => {
     }, 500);
   }
 }, 3000);
+
+if (PROXY_URL) fetchAndSolveChallenge();

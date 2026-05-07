@@ -85,6 +85,8 @@ const ALLOWED_ORIGINS = (process.env.SERVICE || '')
   .split(',')
   .map(normalizeAllowedOrigin)
   .filter(Boolean);
+const POW_DIFFICULTY = 4; // 4 hex zeros = ~65,536 iterations on average
+const activeChallenges = new Map();
 const apiLimit = new Map();
 
 function parsePositiveInt(value, fallback) {
@@ -158,6 +160,24 @@ function requireApiAccess(req, res, next) {
   const origin = req.get('origin');
   if (!isAllowedOrigin(origin)) return deny(req, res, 403, 'blocked_origin');
   if (!hasCompatibleFetchMetadata(req)) return deny(req, res, 403, 'blocked_fetch_metadata');
+
+  const seed = req.get('X-LP-Seed');
+  const nonce = req.get('X-LP-Nonce');
+  
+  if (!seed || !nonce) return deny(req, res, 401, 'missing_pow');
+
+  const challenge = activeChallenges.get(seed);
+  if (!challenge || challenge.origin !== origin) {
+    return deny(req, res, 401, 'invalid_or_expired_pow_seed');
+  }
+
+  // Prevent replay attacks by consuming the seed instantly
+  activeChallenges.delete(seed);
+
+  const hash = crypto.createHash('sha256').update(seed + nonce).digest('hex');
+  if (!hash.startsWith('0'.repeat(POW_DIFFICULTY))) {
+    return deny(req, res, 401, 'invalid_pow_hash');
+  }
 
   const tokenKey = `${origin}:${getClientIp(req)}`;
   if (!consumeRateLimit(apiLimit, tokenKey, API_RATE_LIMIT_WINDOW_MS, API_RATE_LIMIT_MAX)) {
@@ -282,8 +302,21 @@ app.get('/share', async (req, res) => {
   }
 });
 
+app.get('/api/challenge', requireAllowedOrigin, (req, res) => {
+  const seed = crypto.randomBytes(16).toString('hex');
+  const origin = req.get('origin');
+  
+  activeChallenges.set(seed, { origin, expiresAt: Date.now() + 2 * 60 * 1000 });
+  res.json({ seed, difficulty: POW_DIFFICULTY });
+});
 
-
+// Periodic sweep for expired challenges
+setInterval(() => {
+  const now = Date.now();
+  for (const [seed, data] of activeChallenges.entries()) {
+    if (now > data.expiresAt) activeChallenges.delete(seed);
+  }
+}, 60 * 1000).unref();
 /**
  * Odesli proxy with 48-hour caching.
  * Cache key is the normalized URL + country pair so regional variants are cached separately.
