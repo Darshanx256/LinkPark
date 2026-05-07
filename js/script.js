@@ -273,12 +273,17 @@ document.getElementById('seekWrap').addEventListener('click', (e) => {
 document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => {
   if (!currentData) return;
   const btn = e.currentTarget;
-  const url = new URL(window.location.href);
+  const currentUrl = new URL(window.location.href);
   const hash = await encodeShare(currentData);
-  url.searchParams.set('s', hash);
+  
+  // Use the Render proxy for sharing to enable dynamic OG tags (Social Previews)
+  const shareUrl = PROXY_URL ? new URL(`${PROXY_URL}/share`) : currentUrl;
+  shareUrl.searchParams.set('s', hash);
+
   try {
-    await navigator.clipboard.writeText(url.toString());
-    window.history.replaceState({}, '', url);
+    await navigator.clipboard.writeText(shareUrl.toString());
+    window.history.replaceState({}, '', shareUrl);
+
     const oldHtml = btn.innerHTML;
     btn.classList.add('copied');
     btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied Link`;

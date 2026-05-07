@@ -3,6 +3,7 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -271,6 +272,68 @@ app.use((req, res, next) => {
 
   return deny(req, res, 403, 'ip_not_allowed');
 });
+
+/**
+ * Dynamic Preview Wrapper for Social Sharing.
+ * Decodes the 's' parameter, fetches high-res artwork, and serves OG tags.
+ * Redirects the actual user to the GitHub Pages site.
+ */
+app.get('/share', async (req, res) => {
+  const s = req.query.s;
+  const baseUrl = 'https://darshanx256.github.io/LinkPark/';
+  
+  if (!s) return res.redirect(baseUrl);
+
+  try {
+    // 1. Decompress metadata
+    const bin = Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    const decompressed = zlib.inflateSync(bin).toString('utf8');
+    const [title, artist, itunesId] = decompressed.split('|');
+
+    if (!title || !artist) throw new Error('Invalid payload');
+
+    // 2. Fetch high-res artwork from iTunes (not included in 's' to save space)
+    let art = `${baseUrl}assets/logo.webp`;
+    if (itunesId) {
+      try {
+        const r = await fetch(`https://itunes.apple.com/lookup?id=${itunesId}`);
+        const d = await r.json();
+        if (d.results?.[0]) {
+          art = d.results[0].artworkUrl100.replace('100x100bb', '600x600bb');
+        }
+      } catch (err) {
+        console.warn(`[share] iTunes lookup failed for ${itunesId}:`, err.message);
+      }
+    }
+
+    // 3. Serve page with Open Graph tags and immediate redirect
+    res.setHeader('Content-Type', 'text/html');
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${title} — ${artist}</title>
+  <meta property="og:title" content="${title} — ${artist}">
+  <meta property="og:description" content="Listen to this track on your favorite streaming platform via LinkPark.">
+  <meta property="og:image" content="${art}">
+  <meta property="og:type" content="music.song">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#0a0a0f">
+  <meta http-equiv="refresh" content="0;url=${baseUrl}?s=${encodeURIComponent(s)}">
+</head>
+<body style="background:#0a0a0f;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+  <div style="text-align:center;">
+    <p>Redirecting to LinkPark...</p>
+    <script>window.location.href = "${baseUrl}?s=" + encodeURIComponent("${s}");</script>
+  </div>
+</body>
+</html>`);
+  } catch (err) {
+    console.error(`[share] Failed to generate preview for ${s.slice(0, 10)}...:`, err.message);
+    res.redirect(`${baseUrl}?s=${encodeURIComponent(s)}`);
+  }
+});
+
 
 app.post('/api/session', requireAllowedOrigin, async (req, res) => {
   const origin = req.get('origin');
