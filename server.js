@@ -287,7 +287,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
     if (!href && pid === 'youtubeMusic') {
       const yt = od?.linksByPlatform?.youtube?.url;
       if (yt && yt.includes('watch')) {
-        href = yt.replace('www.youtube.com', 'music.youtube.com').replace('youtube.com', 'music.youtube.com');
+        href = yt.replace(/^(https?:\/\/)?(www\.)?youtube\.com/, '$1music.youtube.com');
       }
     }
     if (href) links[pid] = href;
@@ -299,7 +299,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   }
   if (!links.youtubeMusic && tfYt?.results) {
     const r = tfYt.results.find(it => it.url.includes('music.youtube.com') || it.url.includes('youtube.com/watch'));
-    if (r) links.youtubeMusic = (r?.url || '').replace('www.youtube.com', 'music.youtube.com').replace('youtube.com', 'music.youtube.com');
+    if (r) links.youtubeMusic = (r?.url || '').replace(/^(https?:\/\/)?(www\.)?youtube\.com/, '$1music.youtube.com');
   }
 
   const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
