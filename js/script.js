@@ -1,6 +1,6 @@
 import {
-  ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY, PROXY_SESSION_API,
-  TURNSTILE_SITE_KEY, COUNTRY, SMAP, SREV, P, PLACEHOLDERS
+  ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY,
+  COUNTRY, SMAP, SREV, P, PLACEHOLDERS
 } from './constants.js';
 
 /** 
@@ -9,144 +9,10 @@ import {
  */
 let lastResolveId = 0;
 let currentData = null; // Stores currently resolved track for sharing
-let proxySession = null;
-let proxySessionPromise = null;
-let turnstileWidgetId = null;
-let isTurnstileExecuting = false;
-
-
-
-
-function waitForTurnstile() {
-  return new Promise((resolve, reject) => {
-    if (!TURNSTILE_SITE_KEY) return reject(new Error('Turnstile site key is not configured'));
-    if (window.turnstile) return resolve(window.turnstile);
-
-    let attempts = 0;
-    const timer = setInterval(() => {
-      attempts += 1;
-      if (window.turnstile) {
-        clearInterval(timer);
-        resolve(window.turnstile);
-      } else if (attempts > 100) {
-        clearInterval(timer);
-        reject(new Error('Turnstile failed to load'));
-      }
-    }, 100);
-  });
-}
-
-async function getTurnstileToken() {
-  console.log('[Auth] Starting Turnstile challenge...');
-  if (isTurnstileExecuting) {
-    console.log('[Auth] Turnstile already executing, waiting...');
-    await new Promise(r => setTimeout(r, 500));
-    return getTurnstileToken();
-  }
-
-  const turnstile = await waitForTurnstile();
-  const container = document.getElementById('turnstileWidget');
-  if (!container) throw new Error('Turnstile container is missing');
-
-  isTurnstileExecuting = true;
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      console.error('[Auth] Turnstile timed out after 60s');
-      isTurnstileExecuting = false;
-      reject(new Error('Turnstile timed out'));
-    }, 60000);
-
-    const finish = (token) => {
-      console.log('[Auth] Turnstile challenge successful! Token acquired.');
-      isTurnstileExecuting = false;
-      clearTimeout(timeout);
-      resolve(token);
-    };
-
-    const onError = () => {
-      console.error('[Auth] Turnstile challenge failed (error-callback)');
-      isTurnstileExecuting = false;
-      clearTimeout(timeout);
-      reject(new Error('Turnstile challenge failed'));
-    };
-
-    if (turnstileWidgetId === null) {
-      console.log('[Auth] Rendering new Turnstile widget...');
-      turnstileWidgetId = turnstile.render(container, {
-        sitekey: TURNSTILE_SITE_KEY,
-        size: 'invisible',
-        callback: finish,
-        'error-callback': onError,
-        'expired-callback': () => {
-          console.warn('[Auth] Turnstile token expired');
-          isTurnstileExecuting = false;
-          if (turnstileWidgetId !== null) turnstile.reset(turnstileWidgetId);
-        }
-      });
-    } else {
-      console.log('[Auth] Resetting and executing existing Turnstile widget...');
-      turnstile.reset(turnstileWidgetId);
-      turnstile.execute(turnstileWidgetId);
-    }
-  });
-}
-
-async function getProxySession() {
-  if (!PROXY_SESSION_API) return null;
-
-  const now = Date.now();
-  if (proxySession && proxySession.expiresAt - now > 30000) {
-    console.log('[Auth] Using cached proxy session');
-    return proxySession.token;
-  }
-  if (proxySessionPromise) {
-    console.log('[Auth] Waiting for existing proxy session request...');
-    return proxySessionPromise;
-  }
-
-  console.log('[Auth] Requesting new proxy session...');
-  proxySessionPromise = (async () => {
-    try {
-      const turnstileToken = await getTurnstileToken();
-      console.log('[Auth] Sending token to proxy backend...');
-      const response = await fetch(PROXY_SESSION_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ turnstileToken })
-      });
-
-      if (!response.ok) {
-        console.error(`[Auth] Proxy backend rejected session: ${response.status}`);
-        throw new Error(`proxy session ${response.status}`);
-      }
-      
-      const data = await response.json();
-      if (!data.token || !data.expiresIn) {
-        console.error('[Auth] Proxy backend returned invalid data format');
-        throw new Error('proxy session response was invalid');
-      }
-
-      console.log('[Auth] Proxy session established successfully!');
-      proxySession = {
-        token: data.token,
-        expiresAt: Date.now() + (data.expiresIn * 1000)
-      };
-      return proxySession.token;
-    } catch (err) {
-      console.error('[Auth] Proxy session request failed:', err.message);
-      proxySessionPromise = null; // reset so next search can retry cleanly
-      throw err;
-    }
-  })();
-
-  return proxySessionPromise;
-}
 
 async function getProxyHeaders() {
-  if (!PROXY_SESSION_API) return { 'X-API-Key': TFKEY };
-  const token = await getProxySession();
-  return { Authorization: `Bearer ${token}` };
+  if (!PROXY_URL) return { 'X-API-Key': TFKEY };
+  return {};
 }
 
 /**

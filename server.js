@@ -12,7 +12,6 @@ const SESSION_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.SESSION_RATE_L
 const SESSION_RATE_LIMIT_MAX = parsePositiveInt(process.env.SESSION_RATE_LIMIT_MAX, 20);
 const API_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.API_RATE_LIMIT_WINDOW_MS, 60 * 1000);
 const API_RATE_LIMIT_MAX = parsePositiveInt(process.env.API_RATE_LIMIT_MAX, 120);
-const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
 /**
  * Parses up to 9 comma-separated API keys from the TFKEY environment variable.
@@ -86,9 +85,6 @@ const ALLOWED_ORIGINS = (process.env.SERVICE || '')
   .split(',')
   .map(normalizeAllowedOrigin)
   .filter(Boolean);
-const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '';
-const PROXY_SESSION_SECRET = process.env.PROXY_SESSION_SECRET || '';
-const sessionLimit = new Map();
 const apiLimit = new Map();
 
 function parsePositiveInt(value, fallback) {
@@ -107,49 +103,7 @@ function normalizeAllowedOrigin(value) {
   }
 }
 
-function base64url(value) {
-  return Buffer.from(value).toString('base64url');
-}
 
-function signTokenPayload(payload) {
-  return crypto
-    .createHmac('sha256', PROXY_SESSION_SECRET)
-    .update(payload)
-    .digest('base64url');
-}
-
-function createProxyToken(origin) {
-  const now = Math.floor(Date.now() / 1000);
-  const payload = base64url(JSON.stringify({
-    origin,
-    iat: now,
-    exp: now + TOKEN_TTL_SECONDS,
-    nonce: crypto.randomBytes(16).toString('base64url')
-  }));
-  return `${payload}.${signTokenPayload(payload)}`;
-}
-
-function verifyProxyToken(token, origin) {
-  if (!PROXY_SESSION_SECRET || !token || !token.includes('.')) return null;
-
-  const [payload, signature] = token.split('.');
-  if (!payload || !signature) return null;
-
-  const expected = signTokenPayload(payload);
-  const receivedBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-  if (receivedBuffer.length !== expectedBuffer.length) return null;
-  if (!crypto.timingSafeEqual(receivedBuffer, expectedBuffer)) return null;
-
-  try {
-    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (data.origin !== origin) return null;
-    if (!Number.isFinite(data.exp) || data.exp <= Math.floor(Date.now() / 1000)) return null;
-    return data;
-  } catch (_) {
-    return null;
-  }
-}
 
 function getClientIp(req) {
   let clientIp = req.ip || '';
@@ -200,22 +154,16 @@ function requireAllowedOrigin(req, res, next) {
   return deny(req, res, 403, 'blocked_origin');
 }
 
-function requireProxyAuth(req, res, next) {
+function requireApiAccess(req, res, next) {
   const origin = req.get('origin');
   if (!isAllowedOrigin(origin)) return deny(req, res, 403, 'blocked_origin');
   if (!hasCompatibleFetchMetadata(req)) return deny(req, res, 403, 'blocked_fetch_metadata');
 
-  const auth = req.get('authorization') || '';
-  const match = auth.match(/^Bearer\s+(.+)$/i);
-  const tokenData = match ? verifyProxyToken(match[1], origin) : null;
-  if (!tokenData) return deny(req, res, 401, 'invalid_token');
-
-  const tokenKey = `${origin}:${tokenData.nonce || match[1].slice(0, 24)}:${getClientIp(req)}`;
+  const tokenKey = `${origin}:${getClientIp(req)}`;
   if (!consumeRateLimit(apiLimit, tokenKey, API_RATE_LIMIT_WINDOW_MS, API_RATE_LIMIT_MAX)) {
     return deny(req, res, 429, 'rate_limited');
   }
 
-  req.proxySession = tokenData;
   return next();
 }
 
@@ -335,50 +283,12 @@ app.get('/share', async (req, res) => {
 });
 
 
-app.post('/api/session', requireAllowedOrigin, async (req, res) => {
-  const origin = req.get('origin');
-  if (!TURNSTILE_SECRET_KEY || !PROXY_SESSION_SECRET) {
-    return deny(req, res, 503, 'proxy_auth_not_configured');
-  }
-  if (!hasCompatibleFetchMetadata(req)) return deny(req, res, 403, 'blocked_fetch_metadata');
-
-  const limitKey = `${origin}:${getClientIp(req)}`;
-  if (!consumeRateLimit(sessionLimit, limitKey, SESSION_RATE_LIMIT_WINDOW_MS, SESSION_RATE_LIMIT_MAX)) {
-    return deny(req, res, 429, 'rate_limited');
-  }
-
-  const turnstileToken = req.body && req.body.turnstileToken;
-  if (!turnstileToken || typeof turnstileToken !== 'string') {
-    return deny(req, res, 400, 'missing_turnstile_token');
-  }
-
-  try {
-    const params = new URLSearchParams();
-    params.set('secret', TURNSTILE_SECRET_KEY);
-    params.set('response', turnstileToken);
-    params.set('remoteip', getClientIp(req));
-
-    const response = await fetch(TURNSTILE_VERIFY_URL, {
-      method: 'POST',
-      body: params
-    });
-    const result = await response.json();
-
-    if (!result.success) return deny(req, res, 401, 'turnstile_failed');
-
-    const token = createProxyToken(origin);
-    res.json({ token, expiresIn: TOKEN_TTL_SECONDS });
-  } catch (error) {
-    console.warn('Turnstile verification error:', error.message);
-    res.status(502).json({ error: 'turnstile_unavailable' });
-  }
-});
 
 /**
  * Odesli proxy with 48-hour caching.
  * Cache key is the normalized URL + country pair so regional variants are cached separately.
  */
-app.get('/api/odesli', requireProxyAuth, async (req, res) => {
+app.get('/api/odesli', requireApiAccess, async (req, res) => {
   const { url, userCountry } = req.query;
   if (!url) return res.status(400).json({ error: 'url is required' });
 
@@ -430,7 +340,7 @@ app.get('/api/odesli', requireProxyAuth, async (req, res) => {
  * hit the Tinyfish API twice within the TTL window.
  * On a rate-limit (429) or server error, retries with a different random key.
  */
-app.get('/api/search', requireProxyAuth, async (req, res) => {
+app.get('/api/search', requireApiAccess, async (req, res) => {
   const { query } = req.query;
 
   if (!query) return res.status(400).json({ error: 'Query is required' });
