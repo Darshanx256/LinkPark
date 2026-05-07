@@ -1,17 +1,7 @@
-/**
- * Core configuration and API endpoint derivations.
- * PROXY: Target URL for the Node.js proxy server to abstract API keys.
- * TFAPI: Search endpoint for Tinyfish API (either proxied or direct).
- * ODESLI_PROXY: Resolution endpoint for Odesli via local proxy.
- * COUNTRY: Derived ISO country code for region-specific music availability.
- */
-const ODESLI = 'https://api.song.link/v1-alpha.1/links';
-const PROXY = 'https://linkpark.onrender.com/api/search'; 
-const TFKEY = window.LINKPARK_CONFIG?.TFKEY || 'YOUR_TINYFISH_API_KEY_HERE';
-const PROXY_BASE = PROXY ? PROXY.replace(/\/api\/search$/, '') : '';
-const TFAPI = PROXY_BASE ? PROXY_BASE + '/api/search' : 'https://api.search.tinyfish.ai';
-const ODESLI_PROXY = PROXY_BASE ? PROXY_BASE + '/api/odesli' : '';
-const COUNTRY = navigator.language.split('-')[1]?.toUpperCase() || 'US';
+import { 
+  ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY, COUNTRY, 
+  SMAP, SREV, P, PLACEHOLDERS 
+} from './constants.js';
 
 /** 
  * Unique identifier for the current resolution request.
@@ -20,8 +10,7 @@ const COUNTRY = navigator.language.split('-')[1]?.toUpperCase() || 'US';
 let lastResolveId = 0; 
 let currentData = null; // Stores currently resolved track for sharing
 
-const SMAP = { s: 'spotify', a: 'appleMusic', y: 'youtubeMusic', z: 'amazonMusic', t: 'tidal', d: 'deezer', p: 'pandora' };
-const SREV = { spotify: 's', appleMusic: 'a', youtubeMusic: 'y', amazonMusic: 'z', tidal: 't', deezer: 'd', pandora: 'p' };
+
 
 /**
  * Advanced Compression & Encoding Engine.
@@ -97,36 +86,7 @@ async function decodeShare(s) {
  * Platform definitions for UI rendering and link mapping.
  * Ordered by display priority. 
  */
-const P = [
-  {
-    id: 'spotify', name: 'Spotify', bg: '#1DB954', fg: '#fff',
-    svg: `<path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>`
-  },
-  {
-    id: 'appleMusic', name: 'Apple Music', bg: '#FA243C', fg: '#fff',
-    svg: `<path d="M23.994 6.124a9.23 9.23 0 00-.24-2.19c-.317-1.31-1.062-2.31-2.18-3.043a5.022 5.022 0 00-1.877-.726 10.496 10.496 0 00-1.564-.15c-.04-.003-.083-.01-.124-.013H5.986c-.152.01-.303.017-.455.026-.747.043-1.49.123-2.193.4-1.336.53-2.3 1.452-2.865 2.78-.192.448-.292.925-.363 1.408-.056.392-.088.785-.1 1.18 0 .032-.007.062-.01.093v12.223c.01.14.017.283.027.424.05.815.154 1.624.497 2.373.65 1.42 1.738 2.353 3.234 2.801.42.127.856.187 1.293.228.555.053 1.11.06 1.667.06h11.03a12.5 12.5 0 001.57-.1c.822-.106 1.596-.35 2.295-.81a5.046 5.046 0 001.88-2.207c.186-.42.293-.87.37-1.324.113-.675.138-1.358.137-2.04-.002-3.8 0-7.595-.003-11.393zm-6.423 3.99v5.712c0 .417-.058.827-.244 1.206-.29.59-.76.962-1.388 1.14-.35.1-.706.157-1.07.173-.95.045-1.773-.6-1.943-1.536a1.88 1.88 0 011.038-2.022c.323-.16.67-.25 1.018-.324.378-.082.758-.153 1.134-.24.274-.063.457-.23.51-.516a.904.904 0 00.02-.193c0-1.815 0-3.63-.002-5.443a.725.725 0 00-.026-.185c-.04-.15-.15-.243-.304-.234-.16.01-.318.035-.475.066-.76.15-1.52.303-2.28.456l-2.325.47-1.374.278c-.016.003-.032.01-.048.013-.277.077-.377.203-.39.49-.002.042 0 .086 0 .13-.002 2.602 0 5.204-.003 7.805 0 .42-.047.836-.215 1.227-.278.64-.77 1.04-1.434 1.233-.35.1-.71.16-1.075.172-.96.036-1.755-.6-1.92-1.544-.14-.812.23-1.685 1.154-2.075.357-.15.73-.232 1.108-.31.287-.06.575-.116.86-.177.383-.083.583-.323.6-.714v-.15c0-2.96 0-5.922.002-8.882 0-.123.013-.25.042-.37.07-.285.273-.448.546-.518.255-.066.515-.112.774-.165.733-.15 1.466-.296 2.2-.444l2.27-.46c.67-.134 1.34-.27 2.01-.403.22-.043.442-.088.663-.106.31-.025.523.17.554.482.008.073.012.148.012.223.002 1.91.002 3.822 0 5.732z"/>`
-  },
-  {
-    id: 'youtubeMusic', name: 'YT Music', bg: '#FF0000', fg: '#fff',
-    svg: `<path d="M12 0C5.376 0 0 5.376 0 12s5.376 12 12 12 12-5.376 12-12S18.624 0 12 0zm0 19.104c-3.924 0-7.104-3.18-7.104-7.104S8.076 4.896 12 4.896s7.104 3.18 7.104 7.104-3.18 7.104-7.104 7.104zm0-13.332c-3.432 0-6.228 2.796-6.228 6.228S8.568 18.228 12 18.228s6.228-2.796 6.228-6.228S15.432 5.772 12 5.772zM9.684 15.54V8.46L15.816 12l-6.132 3.54z"/>`
-  },
-  {
-    id: 'amazonMusic', name: 'Amazon Music', bg: 'linear-gradient(135deg, #00A8E1, #00E1D9)', fg: '#000', viewBox: '0 0 90 90',
-    svg: `<path d="M 71.266 44.277 c -7.112 5.253 -17.446 8.042 -26.331 8.042 c -12.452 0 -23.672 -4.605 -32.146 -12.258 c -0.67 -0.605 -0.065 -1.427 0.735 -0.951 c 9.166 5.318 20.473 8.539 32.168 8.539 c 7.891 0 16.56 -1.643 24.537 -5.015 C 71.417 42.093 72.433 43.412 71.266 44.277 z M 74.227 40.904 c -0.908 -1.167 -6.01 -0.562 -8.323 -0.281 c -0.692 0.086 -0.8 -0.519 -0.173 -0.973 c 4.064 -2.854 10.744 -2.032 11.523 -1.081 c 0.778 0.973 -0.216 7.653 -4.021 10.852 c -0.584 0.497 -1.146 0.238 -0.886 -0.411 C 73.211 46.871 75.135 42.05 74.227 40.904 z" transform="translate(-13.5, 3) scale(1.3)"/>`
-  },
-  {
-    id: 'tidal', name: 'Tidal', bg: '#00FFFF', fg: '#000',
-    svg: `<path d="M12.012 3.992L8.008 7.996 4.004 3.992 0 7.996 4.004 12l4.004-4.004L12.012 12l-4.004 4.004 4.004 4.004 4.004-4.004L12.012 12l4.004-4.004-4.004-4.004zM16.042 7.996l3.979-3.979L24 7.996l-3.979 3.979z"/>`
-  },
-  {
-    id: 'deezer', name: 'Deezer', bg: '#EF5466', fg: '#fff',
-    svg: `<path d="M.693 10.024c.381 0 .693-1.256.693-2.807 0-1.55-.312-2.807-.693-2.807C.312 4.41 0 5.666 0 7.217s.312 2.808.693 2.808ZM21.038 1.56c-.364 0-.684.805-.91 2.096C19.765 1.446 19.184 0 18.526 0c-.78 0-1.464 2.036-1.784 5-.312-2.158-.788-3.536-1.325-3.536-.745 0-1.386 2.704-1.62 6.472-.442-1.932-1.083-3.145-1.793-3.145s-1.35 1.213-1.793 3.145c-.242-3.76-.874-6.463-1.628-6.463-.537 0-1.013 1.378-1.325 3.535C6.938 2.036 6.262 0 5.474 0c-.658 0-1.247 1.447-1.602 3.665-.217-1.291-.546-2.105-.91-2.105-.675 0-1.221 2.807-1.221 6.272 0 3.466.546 6.273 1.221 6.273.277 0 .537-.476.736-1.273.32 2.928.996 4.938 1.776 4.938.606 0 1.143-1.204 1.507-3.11.251 3.622.875 6.195 1.602 6.195.46 0 .875-1.023 1.187-2.677C10.142 21.6 11 24 12.004 24c1.005 0 1.863-2.4 2.235-5.822.312 1.654.727 2.677 1.186 2.677.728 0 1.352-2.573 1.603-6.195.364 1.906.9 3.11 1.507 3.11.78 0 1.455-2.01 1.775-4.938.208.797.46 1.273.737 1.273.675 0 1.22-2.807 1.22-6.273-.008-3.457-.553-6.272-1.23-6.272ZM23.307 10.024c.381 0 .693-1.256.693-2.807 0-1.55-.312-2.807-.693-2.807-.381 0-.693 1.256-.693 2.807s.312 2.808.693 2.808Z"/>`
-  },
-  {
-    id: 'pandora', name: 'Pandora', bg: '#224099', fg: '#fff',
-    svg: `<path d="M2.541 0v24h4.484V16.89h4.869c5.65 0 9.565-3.325 9.565-8.527 0-5.067-3.606-8.363-8.868-8.363H2.541z"/>`
-  },
-];
+
 
 const qEl = document.getElementById('q');
 const ddEl = document.getElementById('dd');
@@ -665,7 +625,7 @@ async function fetchOdesli(url) {
  * @param {string} album - Optional album name for better query targeting.
  */
 async function fetchTinyfish(title, artist, album = '') {
-  const headers = PROXY ? {} : { 'X-API-Key': TFKEY };
+  const headers = PROXY_URL ? {} : { 'X-API-Key': TFKEY };
   const out = {};
 
   const knownArtist = (artist && artist !== 'Unknown') ? artist : '';
@@ -793,14 +753,13 @@ function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(
  * Rotates the search placeholder text.
  * Occurs only when the input is empty and not focused to prevent disruption.
  */
-const ph = ['Type a few lyrics…', 'Search a song…', 'Drop a link…'];
 let phIdx = 1; 
 setInterval(() => {
   if (document.activeElement !== qEl && qEl.value === '') {
     qEl.classList.add('ph-fade');
     setTimeout(() => {
-      phIdx = (phIdx + 1) % ph.length;
-      qEl.placeholder = ph[phIdx];
+      phIdx = (phIdx + 1) % PLACEHOLDERS.length;
+      qEl.placeholder = PLACEHOLDERS[phIdx];
       qEl.classList.remove('ph-fade');
     }, 500);
   }
