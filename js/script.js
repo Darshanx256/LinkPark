@@ -329,7 +329,7 @@ function updatePlayBtn() {
 
 /**
  * Dispatches input to either URL resolution or search suggestion.
- * Uses a 280ms debounce to minimize API chatter and improve typing feel.
+ * Uses a 220ms debounce to minimize API chatter and improve typing feel.
  */
 qEl.addEventListener('input', () => {
   clearTimeout(timer);
@@ -355,11 +355,11 @@ qEl.addEventListener('input', () => {
     if (!/^https?:\/\//i.test(url) && !url.startsWith('spotify:')) {
       url = 'https://' + url;
     }
-    timer = setTimeout(() => resolve(url), 280);
+    timer = setTimeout(() => resolve(url), 220);
     return;
   }
 
-  timer = setTimeout(() => suggest(v), 280);
+  timer = setTimeout(() => suggest(v), 220);
 });
 
 /**
@@ -683,6 +683,7 @@ function populateUI(title, artist, art, preview, links) {
 
   linksEl.innerHTML = '';
   
+  if (!links) {
     const shareBtn = document.getElementById('shareCardBtn');
     if (shareBtn) shareBtn.classList.add('skeleton');
 
