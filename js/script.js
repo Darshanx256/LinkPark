@@ -10,7 +10,7 @@ import {
 let lastResolveId = 0;
 let currentData = null; // Stores currently resolved track for sharing
 
-let currentPoWPromise = null;
+const challengeQueue = [];
 
 async function solvePoW(seed, difficulty) {
   const target = '0'.repeat(difficulty);
@@ -36,7 +36,7 @@ async function solvePoW(seed, difficulty) {
 function fetchAndSolveChallenge() {
   if (!PROXY_URL) return;
   
-  currentPoWPromise = (async () => {
+  const promise = (async () => {
     try {
       const res = await fetch(`${PROXY_URL}/api/challenge`);
       if (!res.ok) throw new Error('Challenge fetch failed');
@@ -46,28 +46,33 @@ function fetchAndSolveChallenge() {
       return { seed, nonce };
     } catch (e) {
       console.error('PoW challenge failed:', e);
+      // Remove failed promise from queue to allow retry
+      const idx = challengeQueue.indexOf(promise);
+      if (idx > -1) challengeQueue.splice(idx, 1);
       await new Promise(r => setTimeout(r, 2000));
-      currentPoWPromise = null;
       throw e;
     }
   })();
+  
+  challengeQueue.push(promise);
 }
 
 async function getPoWHeaders() {
   if (!PROXY_URL) return { 'X-API-Key': TFKEY };
 
-  if (!currentPoWPromise) fetchAndSolveChallenge();
+  if (challengeQueue.length === 0) fetchAndSolveChallenge();
   
   try {
-    const pow = await currentPoWPromise;
-    // Pre-warm the next challenge for the next search
-    fetchAndSolveChallenge();
+    const pow = await challengeQueue.shift();
+    // Maintain a small pool of pre-solved challenges
+    if (challengeQueue.length < 2) fetchAndSolveChallenge();
+    
     return {
       'X-LP-Seed': pow.seed,
       'X-LP-Nonce': pow.nonce.toString()
     };
   } catch (e) {
-    // Fallback if proxy fails
+    if (challengeQueue.length > 0) return getPoWHeaders();
     return {};
   }
 }
@@ -822,4 +827,7 @@ setInterval(() => {
   }
 }, 3000);
 
-if (PROXY_URL) fetchAndSolveChallenge();
+if (PROXY_URL) {
+  fetchAndSolveChallenge();
+  fetchAndSolveChallenge(); // Warm 2 parallel slots
+}
