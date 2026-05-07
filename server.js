@@ -34,48 +34,50 @@ function shuffleKeys() {
 }
 
 /**
- * In-memory LRU-style cache with a hard cap on entry count.
- * Prevents unbounded memory growth on busy deployments.
- * Each entry stores the parsed JSON payload and an expiry timestamp.
+ * High-performance generic Least-Recently-Used (LRU) Cache.
+ * Extends native Map to guarantee a mathematical ceiling on RAM usage.
  */
-const CACHE_TTL   = 48 * 60 * 60 * 1000; // 48 hours in ms
-const CACHE_LIMIT = 500;                  // max entries before eviction
+class LRUCache extends Map {
+  constructor(maxSize) {
+    super();
+    this.maxSize = maxSize;
+  }
+  get(key) {
+    if (!super.has(key)) return undefined;
+    const val = super.get(key);
+    super.delete(key);
+    super.set(key, val); // Move to front (most recently used)
+    return val;
+  }
+  set(key, val) {
+    if (super.size >= this.maxSize && !super.has(key)) {
+      super.delete(super.keys().next().value); // Evict least recently used (first inserted)
+    }
+    super.set(key, val);
+    return this;
+  }
+}
 
-const cache = new Map();
+const CACHE_TTL = 48 * 60 * 60 * 1000;
+
+// Hard limits protect against memory exhaustion during high load / attacks
+const cache = new LRUCache(500);
+const activeChallenges = new LRUCache(5000);
+const apiLimit = new LRUCache(10000);
 
 function cacheGet(key) {
   const entry = cache.get(key);
   if (!entry) return null;
-  if (Date.now() > entry.expires) { cache.delete(key); return null; }
-  return entry.data;
+  if (Date.now() > entry.expires) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data; // Now returns a raw string
 }
 
-function cacheSet(key, data) {
-  // Evict the oldest entry if we've hit the limit
-  if (cache.size >= CACHE_LIMIT) {
-    const oldest = cache.keys().next().value;
-    cache.delete(oldest);
-  }
-  cache.set(key, { data, expires: Date.now() + CACHE_TTL });
+function cacheSet(key, rawStringData) {
+  cache.set(key, { data: rawStringData, expires: Date.now() + CACHE_TTL });
 }
-
-/**
- * Periodic sweep: removes all expired entries every 6 hours.
- * Prevents stale entries from accumulating when they are never re-requested.
- */
-setInterval(() => {
-  const now = Date.now();
-  let swept = 0;
-  for (const [key, entry] of cache.entries()) {
-    if (now > entry.expires) { cache.delete(key); swept++; }
-  }
-  if (swept) console.log(`[cache sweep] removed ${swept} expired entries, ${cache.size} remaining`);
-}, 6 * 60 * 60 * 1000).unref(); // .unref() so the timer never blocks process exit
-
-setInterval(() => {
-  sweepRateLimit(sessionLimit);
-  sweepRateLimit(apiLimit);
-}, 10 * 60 * 1000).unref();
 
 /**
  * Authorized origins for browser-based CORS requests.
@@ -86,8 +88,6 @@ const ALLOWED_ORIGINS = (process.env.SERVICE || '')
   .map(normalizeAllowedOrigin)
   .filter(Boolean);
 const POW_DIFFICULTY = 4; // 4 hex zeros = ~65,536 iterations on average
-const activeChallenges = new Map();
-const apiLimit = new Map();
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -125,19 +125,15 @@ function deny(req, res, status, code) {
 function consumeRateLimit(store, key, windowMs, max) {
   const now = Date.now();
   const current = store.get(key);
+  
+  // Lazy expiration: overwrite if expired
   if (!current || now >= current.resetAt) {
     store.set(key, { count: 1, resetAt: now + windowMs });
     return true;
   }
+  
   current.count += 1;
   return current.count <= max;
-}
-
-function sweepRateLimit(store) {
-  const now = Date.now();
-  for (const [key, entry] of store.entries()) {
-    if (now >= entry.resetAt) store.delete(key);
-  }
 }
 
 function hasCompatibleFetchMetadata(req) {
@@ -167,7 +163,8 @@ function requireApiAccess(req, res, next) {
   if (!seed || !nonce) return deny(req, res, 401, 'missing_pow');
 
   const challenge = activeChallenges.get(seed);
-  if (!challenge || challenge.origin !== origin) {
+  if (!challenge || challenge.origin !== origin || Date.now() > challenge.expiresAt) {
+    if (challenge) activeChallenges.delete(seed);
     return deny(req, res, 401, 'invalid_or_expired_pow_seed');
   }
 
@@ -306,17 +303,10 @@ app.get('/api/challenge', requireAllowedOrigin, (req, res) => {
   const seed = crypto.randomBytes(16).toString('hex');
   const origin = req.get('origin');
   
+  // Seed expires in 2 minutes
   activeChallenges.set(seed, { origin, expiresAt: Date.now() + 2 * 60 * 1000 });
   res.json({ seed, difficulty: POW_DIFFICULTY });
 });
-
-// Periodic sweep for expired challenges
-setInterval(() => {
-  const now = Date.now();
-  for (const [seed, data] of activeChallenges.entries()) {
-    if (now > data.expiresAt) activeChallenges.delete(seed);
-  }
-}, 60 * 1000).unref();
 /**
  * Odesli proxy with 48-hour caching.
  * Cache key is the normalized URL + country pair so regional variants are cached separately.
@@ -329,7 +319,8 @@ app.get('/api/odesli', requireApiAccess, async (req, res) => {
   const cached = cacheGet(cacheKey);
   if (cached) {
     console.log(`[cache hit] ${cacheKey}`);
-    return res.json(cached);
+    res.setHeader('Content-Type', 'application/json');
+    return res.send(cached);
   }
 
   const target = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}&userCountry=${userCountry || 'US'}`;
@@ -345,7 +336,7 @@ app.get('/api/odesli', requireApiAccess, async (req, res) => {
       const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(target)}`);
       if (!r.ok) return r;
       const j = await r.json();
-      return { ok: true, json: () => JSON.parse(j.contents) };
+      return { ok: true, text: async () => j.contents };
     },
     async () => await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`)
   ].sort(() => Math.random() - 0.5);
@@ -354,9 +345,10 @@ app.get('/api/odesli', requireApiAccess, async (req, res) => {
     try {
       const response = await strategies[i]();
       if (response.ok) {
-        const data = await response.json();
-        cacheSet(cacheKey, data);
-        return res.json(data);
+        const text = await response.text();
+        cacheSet(cacheKey, text);
+        res.setHeader('Content-Type', 'application/json');
+        return res.send(text);
       }
       console.warn(`Odesli strategy attempt ${i + 1} failed: ${response.status}`);
     } catch (error) {
@@ -383,7 +375,8 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
   const cached = cacheGet(cacheKey);
   if (cached) {
     console.log(`[cache hit] ${cacheKey}`);
-    return res.json(cached);
+    res.setHeader('Content-Type', 'application/json');
+    return res.send(cached);
   }
 
   // Shuffle key indices once — guaranteed unique order, no retry collisions
@@ -398,9 +391,10 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
         { headers: { 'X-API-Key': currentKey } }
       );
       if (response.ok) {
-        const data = await response.json();
-        cacheSet(cacheKey, data);
-        return res.json(data);
+        const text = await response.text();
+        cacheSet(cacheKey, text);
+        res.setHeader('Content-Type', 'application/json');
+        return res.send(text);
       }
       console.warn(`Tinyfish attempt ${i + 1} (key #${keyOrder[i]}) failed: ${response.status}`);
     } catch (error) {
@@ -412,13 +406,13 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
 });
 
 /** Cache stats endpoint — useful for monitoring without exposing data. */
-app.get('/api/cache-stats', requireProxyAuth, (req, res) => {
+app.get('/api/cache-stats', requireApiAccess, (req, res) => {
   const now = Date.now();
   let active = 0;
   for (const entry of cache.values()) {
     if (now <= entry.expires) active++;
   }
-  res.json({ total: cache.size, active, limit: CACHE_LIMIT, ttl_hours: CACHE_TTL / 3600000 });
+  res.json({ total: cache.size, active, limit: cache.maxSize, ttl_hours: CACHE_TTL / 3600000 });
 });
 
 /**
