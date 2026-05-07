@@ -1,6 +1,6 @@
-import { 
-  ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY, PROXY_SESSION_API, 
-  TURNSTILE_SITE_KEY, COUNTRY, SMAP, SREV, P, PLACEHOLDERS 
+import {
+  ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY, PROXY_SESSION_API,
+  TURNSTILE_SITE_KEY, COUNTRY, SMAP, SREV, P, PLACEHOLDERS
 } from './constants.js';
 
 /** 
@@ -68,12 +68,11 @@ async function getTurnstileToken() {
     };
 
     if (turnstileWidgetId === null) {
-      // Use execution:'execute' so render() does NOT auto-fire.
-      // We then manually call execute() once the widget is fully set up.
+      // Default behavior: render() will auto-execute the invisible challenge.
+      // We do NOT manually call execute() here, avoiding the iframe initialization race condition.
       turnstileWidgetId = turnstile.render(container, {
         sitekey: TURNSTILE_SITE_KEY,
         size: 'invisible',
-        execution: 'execute',
         callback: finish,
         'error-callback': onError,
         'expired-callback': () => {
@@ -81,12 +80,11 @@ async function getTurnstileToken() {
           if (turnstileWidgetId !== null) turnstile.reset(turnstileWidgetId);
         }
       });
-      // Defer execute() slightly to ensure the widget iframe is mounted
-      setTimeout(() => turnstile.execute(turnstileWidgetId), 50);
     } else {
-      // Widget already exists — reset it, then execute once reset is done
+      // Widget already exists and iframe is fully loaded.
+      // Reset clears the old token, then we manually trigger a new challenge.
       turnstile.reset(turnstileWidgetId);
-      setTimeout(() => turnstile.execute(turnstileWidgetId), 50);
+      turnstile.execute(turnstileWidgetId);
     }
   });
 }
@@ -275,7 +273,7 @@ document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => 
   const btn = e.currentTarget;
   const currentUrl = new URL(window.location.href);
   const hash = await encodeShare(currentData);
-  
+
   // Use the Render proxy for sharing to enable dynamic OG tags (Social Previews)
   const shareUrl = PROXY_URL ? new URL(`${PROXY_URL}/share`) : currentUrl;
   shareUrl.searchParams.set('s', hash);
