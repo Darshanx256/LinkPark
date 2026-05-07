@@ -378,42 +378,35 @@ async function resolve(data) {
     };
 
     // Parallel attempt 1: Get server resolution and initial iTunes lookup
+    // If it's a 'Search Pick', the client already has metadata/preview.
+    // If it's a 'URL Drop', the server will handle the iTunes lookup for us.
     const [resolved, itunesData] = await Promise.allSettled([
       fetchResolve(),
-      (!item || !item.previewUrl) ? fetch(`https://itunes.apple.com/search?term=${enc(q || u)}&entity=song&limit=1&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
+      (item && !item.previewUrl) ? fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
     ]);
 
     if (myId !== lastResolveId) return;
     const res = (resolved.status === 'fulfilled') ? resolved.value : null;
-    let it = (itunesData.status === 'fulfilled') ? itunesData.value : null;
+    const it = (itunesData.status === 'fulfilled') ? itunesData.value : null;
 
     if (!res) { showErr('Failed to resolve song links.'); return; }
     if (!item) item = { title: '', artist: '', art: '', previewUrl: null };
 
-    // Metadata Bridge: If initial iTunes lookup failed (likely for URL drops), 
-    // re-try using the metadata Odesli just found for us.
-    if ((!it || !it.results?.length) && res.title) {
-       try {
-         const term = `${res.title} ${res.artist}`;
-         const r = await fetch(`https://itunes.apple.com/search?term=${enc(term)}&entity=song&limit=1&country=${COUNTRY}`);
-         it = await r.json();
-       } catch (e) { }
-    }
-
+    // Update item with iTunes results if available (primarily for Search Picks)
     if (it?.results?.[0]) {
       const r = it.results[0];
       if (!item.previewUrl) item.previewUrl = r.previewUrl;
       if (!item.art) item.art = r.artworkUrl100.replace('100x100bb', '600x600bb');
-      if (!item.title) item.title = r.trackName;
-      if (!item.artist) item.artist = r.artistName;
       if (!res.links.appleMusic) res.links.appleMusic = r.trackViewUrl;
     }
 
+    // Merge everything (preferring server-side cooked data)
     const finalT = res.title || item.title;
     const finalA = res.artist || item.artist;
-    const finalArt = item.art || res.art;
+    const finalArt = res.art || item.art;
+    const finalPreview = res.preview || item.previewUrl;
 
-    populateUI(finalT, finalA, finalArt, item.previewUrl, res.links);
+    populateUI(finalT, finalA, finalArt, finalPreview, res.links);
     currentData = { t: finalT, a: finalA, itunesId: null, l: res.links };
 
   } catch (e) {

@@ -238,6 +238,24 @@ async function resolveSearch(query) {
 
 /** Endpoints */
 
+async function resolveItunes(query, country = 'US') {
+  const cacheKey = `it:${query}:${country}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return JSON.parse(cached);
+
+  try {
+    const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=1&country=${country}`);
+    if (r.ok) {
+      const data = await r.json();
+      if (data.results?.[0]) {
+        cacheSet(cacheKey, JSON.stringify(data));
+        return data;
+      }
+    }
+  } catch (e) { }
+  return null;
+}
+
 app.get('/api/challenge', requireAllowedOrigin, (req, res) => {
   const seed = crypto.randomBytes(16).toString('hex');
   const origin = req.get('origin');
@@ -263,35 +281,38 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
 
 app.get('/api/resolve', requireApiAccess, async (req, res) => {
   const { query, u, artist, album, country } = req.query;
+  const isUrlDrop = u && !query;
   
   let od = null;
   let tfSp = null, tfYt = null;
+  let itRes = null;
   const initialTasks = [];
 
-  // 1. Start Odesli resolution if a URL was provided
-  if (u) {
-    initialTasks.push(resolveOdesli(u, country).then(d => od = d));
-  }
-
-  // 2. Start early Tinyfish resolution if a query was provided
+  // 1. Initial Batch
+  if (u) initialTasks.push(resolveOdesli(u, country).then(d => od = d));
   if (query) {
     const qBase = query + (artist ? ' ' + artist : '');
     initialTasks.push(resolveSearch(qBase + ' spotify track').then(d => tfSp = d));
     initialTasks.push(resolveSearch(qBase + (album ? ' ' + album : '') + ' youtube music topic').then(d => tfYt = d));
   }
 
-  // Wait for initial batch
   await Promise.allSettled(initialTasks);
 
-  // 3. Late Metadata Fallback: If we dropped a URL (no query) or if early searches missed,
-  // use Odesli's discovered metadata to trigger a more accurate search.
+  // 2. Secondary Batch (Fallback/Supplemental)
+  // If metadata was found via Odesli, use it to fill gaps in Tinyfish or get iTunes data for URL drops
   const ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
-  if (ent.title && (!tfSp || !tfYt)) {
+  if (ent.title) {
     const qMeta = `${ent.title} ${ent.artistName || ''}`;
-    const fallbackTasks = [];
-    if (!tfSp) fallbackTasks.push(resolveSearch(qMeta + ' spotify track').then(d => tfSp = d));
-    if (!tfYt) fallbackTasks.push(resolveSearch(qMeta + ' youtube music topic').then(d => tfYt = d));
-    if (fallbackTasks.length > 0) await Promise.allSettled(fallbackTasks);
+    const secondaryTasks = [];
+    
+    // Fill Tinyfish gaps
+    if (!tfSp) secondaryTasks.push(resolveSearch(qMeta + ' spotify track').then(d => tfSp = d));
+    if (!tfYt) secondaryTasks.push(resolveSearch(qMeta + ' youtube music topic').then(d => tfYt = d));
+    
+    // Fetch iTunes data only for URL drops (client already has it for manual searches)
+    if (isUrlDrop) secondaryTasks.push(resolveItunes(qMeta, country).then(d => itRes = d));
+
+    if (secondaryTasks.length > 0) await Promise.allSettled(secondaryTasks);
   }
 
   const links = {};
@@ -309,7 +330,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
     if (href) links[pid] = href;
   });
 
-  // Priority 2: Tinyfish search results (supplemental)
+  // Priority 2: Tinyfish search results
   if (!links.spotify && tfSp?.results) {
     const r = tfSp.results.find(it => it.url.includes('open.spotify.com/track'));
     if (r) links.spotify = r.url;
@@ -319,11 +340,18 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
     if (r) links.youtubeMusic = (r?.url || '').replace(/^(https?:\/\/)?(www\.)?youtube\.com/, '$1music.youtube.com');
   }
 
+  // Priority 3: iTunes cleanup and preview (especially for URL drops)
+  const itTrack = itRes?.results?.[0];
+  if (itTrack) {
+    if (!links.appleMusic) links.appleMusic = itTrack.trackViewUrl;
+  }
+
   res.json({
     links,
-    title: ent.title || null,
-    artist: ent.artistName || null,
-    art: ent.thumbnailUrl || null
+    title: ent.title || itTrack?.trackName || null,
+    artist: ent.artistName || itTrack?.artistName || null,
+    art: ent.thumbnailUrl || itTrack?.artworkUrl100?.replace('100x100bb', '600x600bb') || null,
+    preview: itTrack?.previewUrl || null
   });
 });
 
