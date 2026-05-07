@@ -12,6 +12,8 @@ let currentData = null; // Stores currently resolved track for sharing
 let proxySession = null;
 let proxySessionPromise = null;
 let turnstileWidgetId = null;
+let isTurnstileExecuting = false;
+
 
 
 
@@ -35,13 +37,26 @@ function waitForTurnstile() {
 }
 
 async function getTurnstileToken() {
+  // Prevent parallel execution of the Turnstile challenge
+  if (isTurnstileExecuting) {
+    await new Promise(r => setTimeout(r, 500));
+    return getTurnstileToken();
+  }
+
   const turnstile = await waitForTurnstile();
   const container = document.getElementById('turnstileWidget');
   if (!container) throw new Error('Turnstile container is missing');
 
+  isTurnstileExecuting = true;
+
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Turnstile timed out')), 15000);
+    const timeout = setTimeout(() => {
+      isTurnstileExecuting = false;
+      reject(new Error('Turnstile timed out'));
+    }, 15000);
+
     const finish = (token) => {
+      isTurnstileExecuting = false;
       clearTimeout(timeout);
       resolve(token);
     };
@@ -52,10 +67,12 @@ async function getTurnstileToken() {
         size: 'invisible',
         callback: finish,
         'error-callback': () => {
+          isTurnstileExecuting = false;
           clearTimeout(timeout);
           reject(new Error('Turnstile challenge failed'));
         },
         'expired-callback': () => {
+          isTurnstileExecuting = false;
           if (turnstileWidgetId !== null) turnstile.reset(turnstileWidgetId);
         }
       });
@@ -75,29 +92,31 @@ async function getProxySession() {
   if (proxySessionPromise) return proxySessionPromise;
 
   proxySessionPromise = (async () => {
-    const turnstileToken = await getTurnstileToken();
-    const response = await fetch(PROXY_SESSION_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ turnstileToken })
-    });
+    try {
+      const turnstileToken = await getTurnstileToken();
+      const response = await fetch(PROXY_SESSION_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ turnstileToken })
+      });
 
-    if (!response.ok) throw new Error(`proxy session ${response.status}`);
-    const data = await response.json();
-    if (!data.token || !data.expiresIn) throw new Error('proxy session response was invalid');
+      if (!response.ok) throw new Error(`proxy session ${response.status}`);
+      const data = await response.json();
+      if (!data.token || !data.expiresIn) throw new Error('proxy session response was invalid');
 
-    proxySession = {
-      token: data.token,
-      expiresAt: Date.now() + (data.expiresIn * 1000)
-    };
-    return proxySession.token;
+      proxySession = {
+        token: data.token,
+        expiresAt: Date.now() + (data.expiresIn * 1000)
+      };
+      return proxySession.token;
+    } finally {
+      // Clear the promise after a short delay to allow concurrent requests to finish
+      // but ensure a fresh attempt on the next user action if needed.
+      setTimeout(() => { proxySessionPromise = null; }, 1000);
+    }
   })();
 
-  try {
-    return await proxySessionPromise;
-  } finally {
-    proxySessionPromise = null;
-  }
+  return proxySessionPromise;
 }
 
 async function getProxyHeaders() {
