@@ -158,6 +158,7 @@ document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => 
   url.searchParams.set('s', hash);
   try {
     await navigator.clipboard.writeText(url.toString());
+    window.history.replaceState({}, '', url);
     const oldHtml = btn.innerHTML;
     btn.classList.add('copied');
     btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied Link`;
@@ -257,14 +258,15 @@ qEl.addEventListener('input', () => {
   errEl.style.display = 'none';
   cardEl.style.display = 'none'; // Instant card drop on new input
   
-  if (v.length < 2) {
+  if (v.length < 2 || v !== `${currentData?.t} — ${currentData?.a}`) {
     const url = new URL(window.location.href);
     if (url.searchParams.has('s')) {
       url.searchParams.delete('s');
       window.history.replaceState({}, '', url);
     }
-    return;
   }
+
+  if (v.length < 2) return;
 
   /**
    * Identifies if input is a streaming URL or Spotify URI.
@@ -528,13 +530,7 @@ async function resolve(data) {
     populateUI(finalTitle, finalArtist, item.art, item.previewUrl, links);
     cardEl.style.display = 'block';
 
-    // Sync URL state without reload (safety check for race conditions)
-    if (myId === lastResolveId) {
-      const hash = await encodeShare(currentData);
-      const url = new URL(window.location.href);
-      url.searchParams.set('s', hash);
-      window.history.replaceState({}, '', url);
-    }
+
 
   } catch (e) {
     if (e.message === 'NoStreamingLinks') {
