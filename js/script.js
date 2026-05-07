@@ -733,10 +733,16 @@ function populateUI(title, artist, art, preview, links) {
  * Uses the authenticated server proxy when configured.
  * @param {string} url - Target streaming URL.
  */
-async function fetchOdesli(url) {
+async function fetchOdesli(url, retry = true) {
   if (ODESLI_PROXY) {
     const headers = await getPoWHeaders();
     const r = await fetch(`${ODESLI_PROXY}?url=${enc(url)}&userCountry=${COUNTRY}`, { headers });
+    
+    if (r.status === 401 && retry) {
+      challengeQueue.length = 0; // Clear potentially mismatched challenges
+      return fetchOdesli(url, false);
+    }
+    
     if (r.ok) return await r.json();
     throw new Error(`odesli proxy ${r.status}`);
   }
@@ -766,14 +772,20 @@ async function fetchTinyfish(title, artist, album = '') {
   const qBase = title + (knownArtist ? ' ' + knownArtist : '');
   const qYt = qBase + (album ? ' ' + album : '') + ' youtube music topic';
 
+  async function tfFetch(q, retry = true) {
+    const h = await getPoWHeaders();
+    const r = await fetch(`${TFAPI}?query=${enc(q)}`, { headers: h });
+    if (r.status === 401 && retry) {
+      challengeQueue.length = 0;
+      return tfFetch(q, false);
+    }
+    return r.ok ? r.json() : null;
+  }
+
   try {
     const [spRes, ytRes] = await Promise.allSettled([
-      getPoWHeaders().then(headers => 
-        fetch(`${TFAPI}?query=${enc(qBase + ' spotify track')}`, { headers }).then(r => r.ok ? r.json() : null)
-      ),
-      getPoWHeaders().then(headers => 
-        fetch(`${TFAPI}?query=${enc(qYt)}`, { headers }).then(r => r.ok ? r.json() : null)
-      )
+      tfFetch(qBase + ' spotify track'),
+      tfFetch(qYt)
     ]);
 
     if (spRes.status === 'fulfilled' && spRes.value?.results) {
