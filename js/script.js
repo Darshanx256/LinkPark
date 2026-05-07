@@ -351,13 +351,7 @@ qEl.addEventListener('input', () => {
   closeDD();
   errEl.style.display = 'none';
   cardEl.style.display = 'none'; // Instant card drop on new input
-<<<<<<< HEAD
-  
   if (v.length < 2 || v !== `${currentData?.t} — ${currentData?.a}`) {
-=======
-
-  if (v.length < 2) {
->>>>>>> feature/turnstile-security
     const url = new URL(window.location.href);
     if (url.searchParams.has('s')) {
       url.searchParams.delete('s');
@@ -717,11 +711,7 @@ async function fetchOdesli(url) {
  * @param {string} album - Optional album name for better query targeting.
  */
 async function fetchTinyfish(title, artist, album = '') {
-<<<<<<< HEAD
-  const headers = PROXY_URL ? {} : { 'X-API-Key': TFKEY };
-=======
   const headers = await getProxyHeaders();
->>>>>>> feature/turnstile-security
   const out = {};
 
   const knownArtist = (artist && artist !== 'Unknown') ? artist : '';
@@ -849,12 +839,7 @@ function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(
  * Rotates the search placeholder text.
  * Occurs only when the input is empty and not focused to prevent disruption.
  */
-<<<<<<< HEAD
-let phIdx = 1; 
-=======
-const ph = ['Type a few lyrics…', 'Search a song…', 'Drop a link…'];
 let phIdx = 1;
->>>>>>> feature/turnstile-security
 setInterval(() => {
   if (document.activeElement !== qEl && qEl.value === '') {
     qEl.classList.add('ph-fade');
