@@ -28,8 +28,8 @@ async function solvePoW(seed, difficulty) {
     
     nonce++;
 
-    // Yield to the event loop every 500 iterations to prevent UI freezing
-    if (nonce % 500 === 0) await new Promise(r => setTimeout(r, 0));
+    // Yield to the event loop every 2000 iterations to prevent UI freezing
+    if (nonce % 2000 === 0) await new Promise(r => setTimeout(r, 0));
   }
 }
 

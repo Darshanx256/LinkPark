@@ -216,7 +216,8 @@ app.use(express.json({ limit: '16kb' }));
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (isAllowedOrigin(origin)) {
+    // Allow if origin is missing (same-origin or non-browser request) or whitelisted
+    if (!origin || isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
       callback(null, false);
