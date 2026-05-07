@@ -445,7 +445,13 @@ function populateUI(title, artist, art, preview, links) {
     for (let i = 0; i < 5; i++) {
       const row = document.createElement('div');
       row.className = 'prow skeleton';
-      row.innerHTML = `<div class="plink"><div class="picon"></div><span class="pname"></span></div><div class="copy-btn"></div>`;
+      row.innerHTML = `
+        <div class="plink">
+          <div class="picon"></div>
+          <span class="pname"></span>
+        </div>
+        <div class="copy-btn"></div>
+      `;
       linksEl.append(row);
     }
     return;
@@ -478,7 +484,13 @@ function makeRow(p, href) {
   a.href = href;
   a.target = '_blank';
   a.rel = 'noopener';
-  a.innerHTML = `<div class="picon" style="background:${p.color}">${p.icon}</div><span class="pname">${p.name}</span><span class="pbadge">PLAY</span>`;
+  a.innerHTML = `
+    <div class="picon" style="background:${p.bg};color:${p.fg}">
+      ${p.svg ? `<svg viewBox="${p.viewBox || '0 0 24 24'}">${p.svg}</svg>` : ''}
+    </div>
+    <span class="pname">${p.name}</span>
+    <span class="pbadge">PLAY</span>
+  `;
   a.addEventListener('mouseenter', () => a.querySelector('.pbadge').classList.add('show'));
   a.addEventListener('mouseleave', () => a.querySelector('.pbadge').classList.remove('show'));
 
