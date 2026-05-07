@@ -28,8 +28,8 @@ async function solvePoW(seed, difficulty) {
     
     nonce++;
 
-    // Yield to the event loop every 2000 iterations to prevent UI freezing
-    if (nonce % 2000 === 0) await new Promise(r => setTimeout(r, 0));
+    // Increase yield frequency to prioritize audio decoding and background network tasks.
+    if (nonce % 500 === 0) await new Promise(r => setTimeout(r, 0));
   }
 }
 
@@ -207,7 +207,13 @@ let isPlaying = false;
 audio.addEventListener('play', () => { isPlaying = true; updatePlayBtn(); });
 audio.addEventListener('pause', () => { isPlaying = false; updatePlayBtn(); });
 audio.addEventListener('ended', () => { isPlaying = false; updatePlayBtn(); });
+let lastTimeUpdate = 0;
 audio.addEventListener('timeupdate', () => {
+  const now = Date.now();
+  // Throttle UI updates to 2Hz to minimize main-thread overhead and preserve battery.
+  if (now - lastTimeUpdate < 500) return;
+  lastTimeUpdate = now;
+
   if (!audio.duration) return;
   const p = (audio.currentTime / audio.duration) * 100;
   document.getElementById('seekFill').style.width = `${p}%`;
