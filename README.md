@@ -58,6 +58,21 @@ Perfect for testing things out on your machine without setting up a server.
 - **Deep Search**: Tinyfish API
 - **Metadata & Audio Previews**: iTunes Search API
 
+### Stress testing Odesli reliability
+
+The repo includes a pytest stress test that runs the real Express proxy, uses the normal `/api/challenge` proof-of-work flow, replaces only Tinyfish with a local simulator, and then slowly resolves 50 random tracks through `/api/resolve` over 10 minutes. Odesli and iTunes are still real network calls.
+
+```bash
+python -m pip install -r requirements-dev.txt
+RUN_LINKPARK_STRESS=1 python -m pytest tests/stress/test_odesli_reliability.py -q
+```
+
+Useful knobs:
+
+```bash
+LINKPARK_STRESS_COUNT=5 LINKPARK_STRESS_DURATION_SECONDS=60 RUN_LINKPARK_STRESS=1 python -m pytest tests/stress/test_odesli_reliability.py -q
+```
+
 ### Design
 The LinkPark logo uses the **Open Sans** font (licensed under the Apache License, Version 2.0). 
 

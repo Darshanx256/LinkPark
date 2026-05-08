@@ -406,8 +406,9 @@ async function resolve(data) {
     const finalArt = res.art || item.art;
     const finalPreview = res.preview || item.previewUrl;
 
+    const itunesId = res.links.appleMusic?.match(/[?&]i=(\d+)/)?.[1] || null;
     populateUI(finalT, finalA, finalArt, finalPreview, res.links);
-    currentData = { t: finalT, a: finalA, itunesId: null, l: res.links };
+    currentData = { t: finalT, a: finalA, itunesId, l: res.links };
 
   } catch (e) {
     console.error('Resolve failed:', e);
@@ -474,8 +475,12 @@ function populateUI(title, artist, art, preview, links) {
     try {
       const u = new URL(href);
       if (p.id === 'appleMusic') {
-        if (u.hostname === 'geo.music.apple.com') u.hostname = 'music.apple.com';
-        for (const k of Array.from(u.searchParams.keys())) if (k !== 'i') u.searchParams.delete(k);
+        // Normalize all Apple domains to music.apple.com for consistency
+        if (u.hostname.includes('apple.com')) u.hostname = 'music.apple.com';
+        // Preserve only the track identifier 'i', remove tracking/affiliate params
+        const trackId = u.searchParams.get('i');
+        Array.from(u.searchParams.keys()).forEach(k => u.searchParams.delete(k));
+        if (trackId) u.searchParams.set('i', trackId);
       } else if (p.id === 'spotify') {
         u.searchParams.delete('si'); u.searchParams.delete('context');
       }

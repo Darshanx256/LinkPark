@@ -19,6 +19,7 @@ const API_RATE_LIMIT_MAX = parsePositiveInt(process.env.API_RATE_LIMIT_MAX, 120)
  * and avoid predictable rate-limit patterns.
  */
 const TFKEYS = (process.env.TFKEY || '').split(',').map(k => k.trim()).filter(Boolean);
+const USE_TINYFISH_SIMULATOR = process.env.TINYFISH_SIMULATOR === '1';
 
 /**
  * Parses allowed origins from the SERVICE environment variable.
@@ -67,6 +68,19 @@ function cacheGet(key) {
 /** Rate Limit Stores */
 const sessionLimit = new Map();
 const apiLimit = new Map();
+
+/** In-flight request deduplication */
+const pendingItunes = new Map();
+
+/** User-Agent Pool for rotation */
+const userAgents = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1'
+];
+const getUA = () => userAgents[Math.floor(Math.random() * userAgents.length)];
 
 function parsePositiveInt(val, fallback) {
   const n = parseInt(val);
@@ -170,46 +184,53 @@ async function resolveOdesli(url, country = 'US') {
 
   const target = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(targetUrl)}&userCountry=${country}`;
   
-  // 'Pro-Proxy' Strategy: Race multiple providers simultaneously to ensure near-zero latency.
+  // Dynamic Moving Proxy Pool: Expanded list with randomized sequential fallback.
   const providers = [
-    target,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`,
-    `https://api.allorigins.win/get?url=${encodeURIComponent(target)}` // Special case for .contents
+    { url: target, type: 'direct' },
+    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`, type: 'proxy' },
+    { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`, type: 'proxy' },
+    { url: `https://corsproxy.io/?${encodeURIComponent(target)}`, type: 'proxy' },
+    { url: `https://thingproxy.freeboard.io/fetch/${target}`, type: 'proxy' },
+    { url: `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`, type: 'allorigins' }
   ];
 
-  const controller = new AbortController();
-  const tasks = providers.map(async (u, i) => {
-    try {
-      const response = await fetch(u, { signal: controller.signal, timeout: 5000 });
-      if (response.ok) {
-        let text = await response.text();
-        // Handle allorigins.win/get wrapper
-        if (u.includes('allorigins.win/get')) {
-          try { text = JSON.parse(text).contents; } catch (e) { throw e; }
-        }
-        
-        const data = JSON.parse(text);
-        if (data.entityUniqueId) {
-          controller.abort(); // Cancel other pending requests
-          return { data, text };
-        }
-      }
-      throw new Error('fail');
-    } catch (e) { throw e; }
-  });
+  // Randomize start index for "moving" effect
+  const shuffled = providers.sort(() => Math.random() - 0.5);
 
-  try {
-    // Return the first successful resolution
-    const { data, text } = await Promise.any(tasks);
-    cacheSet(cacheKey, text);
-    return data;
-  } catch (e) {
-    return null;
+  for (const provider of shuffled) {
+    try {
+      const headers = { 'User-Agent': getUA() };
+      const response = await fetch(provider.url, { headers, timeout: 7000 });
+      
+      if (!response.ok) {
+        if (response.status === 429) console.warn(`[odesli] 429 Rate Limited: ${provider.url}`);
+        continue;
+      }
+
+      let text = await response.text();
+      if (provider.type === 'allorigins') {
+        try { text = JSON.parse(text).contents; } catch (e) { continue; }
+      }
+
+      // Some proxies might return HTML or error pages with 200 OK
+      if (!text || text.trim().startsWith('<')) continue;
+
+      const data = JSON.parse(text);
+      if (data.entityUniqueId) {
+        cacheSet(cacheKey, text);
+        return data;
+      }
+    } catch (e) {
+      // Silently fail to next provider
+      continue;
+    }
   }
+
+  return null;
 }
 
 async function resolveSearch(query) {
+  if (USE_TINYFISH_SIMULATOR) return simulateTinyfishSearch(query);
   if (TFKEYS.length === 0) return null;
   const cacheKey = `tf:${query}`;
   const cached = cacheGet(cacheKey);
@@ -238,6 +259,40 @@ async function resolveSearch(query) {
   return null;
 }
 
+async function simulateTinyfishSearch(query) {
+  const cacheKey = `tf-sim:${query}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return JSON.parse(cached);
+
+  const cleanQuery = query
+    .replace(/\bspotify\s+track\b/ig, '')
+    .replace(/\byoutube\s+music\s+topic\b/ig, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const itunes = await resolveItunes(cleanQuery);
+  const track = itunes?.results?.[0];
+  if (!track?.trackViewUrl) return { results: [] };
+
+  const data = {
+    results: [
+      {
+        title: track.trackName,
+        url: track.trackViewUrl,
+        source: 'appleMusic',
+        artist: track.artistName,
+        album: track.collectionName
+      },
+      {
+        title: `${track.trackName} ${track.artistName}`,
+        url: `https://music.youtube.com/search?q=${encodeURIComponent(`${track.trackName} ${track.artistName}`)}`,
+        source: 'youtubeMusic'
+      }
+    ]
+  };
+  cacheSet(cacheKey, JSON.stringify(data));
+  return data;
+}
+
 /** Endpoints */
 
 async function resolveItunes(query, country = 'US') {
@@ -245,17 +300,31 @@ async function resolveItunes(query, country = 'US') {
   const cached = cacheGet(cacheKey);
   if (cached) return JSON.parse(cached);
 
-  try {
-    const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=1&country=${country}`);
-    if (r.ok) {
-      const data = await r.json();
-      if (data.results?.[0]) {
-        cacheSet(cacheKey, JSON.stringify(data));
-        return data;
+  // Deduplicate in-flight requests for the same query/country
+  if (pendingItunes.has(cacheKey)) return pendingItunes.get(cacheKey);
+
+  const fetchTask = (async () => {
+    try {
+      const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=1&country=${country}`, { timeout: 8000 });
+      if (r.ok) {
+        const data = await r.json();
+        if (data.results?.[0]) {
+          cacheSet(cacheKey, JSON.stringify(data));
+          return data;
+        }
+      } else if (r.status === 429) {
+        console.warn(`[itunes] 429 Rate Limited for query: ${query}`);
       }
+    } catch (e) {
+      console.error(`[itunes] Search failed for ${query}: ${e.message}`);
+    } finally {
+      pendingItunes.delete(cacheKey);
     }
-  } catch (e) { }
-  return null;
+    return null;
+  })();
+
+  pendingItunes.set(cacheKey, fetchTask);
+  return fetchTask;
 }
 
 app.get('/api/challenge', requireAllowedOrigin, (req, res) => {
@@ -288,16 +357,24 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   let od = null;
   let tfSp = null, tfYt = null;
   let itRes = null;
-  const initialTasks = [];
 
-  // 1. Initial Batch
+  // 1. Initial Batch & Normalization
+  const clean = (s) => (s || '').trim();
+  const qTitle = clean(query);
+  const qArtist = clean(artist);
+  const qBase = (qTitle.toLowerCase().includes(qArtist.toLowerCase())) 
+    ? qTitle 
+    : (qTitle + (qArtist ? ' ' + qArtist : ''));
+
+  const initialTasks = [];
   if (u) initialTasks.push(resolveOdesli(u, country).then(d => od = d));
-  if (query) {
-    const qBase = query + (artist ? ' ' + artist : '');
+  if (qBase) {
     initialTasks.push(resolveSearch(qBase + ' spotify track').then(d => tfSp = d));
     initialTasks.push(resolveSearch(qBase + (album ? ' ' + album : '') + ' youtube music topic').then(d => tfYt = d));
+    initialTasks.push(resolveItunes(qBase, country).then(d => itRes = d));
   }
 
+  // Overlap Odesli and Search tasks
   await Promise.allSettled(initialTasks);
 
   // 2. Secondary Batch (Fallback/Supplemental)
@@ -338,9 +415,14 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   });
 
   // Priority 2: Tinyfish search results
+  const tfResults = [...(tfSp?.results || []), ...(tfYt?.results || [])];
   if (!links.spotify && tfSp?.results) {
     const r = tfSp.results.find(it => it.url.includes('open.spotify.com/track'));
     if (r) links.spotify = r.url;
+  }
+  if (!links.appleMusic && tfResults.length > 0) {
+    const r = tfResults.find(it => it.url.includes('music.apple.com') || it.url.includes('itunes.apple.com'));
+    if (r) links.appleMusic = r.url;
   }
   if (!links.youtubeMusic && tfYt?.results) {
     const r = tfYt.results.find(it => it.url.includes('music.youtube.com') || it.url.includes('youtube.com/watch'));
