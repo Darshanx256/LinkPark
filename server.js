@@ -5,9 +5,8 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const multer = require('multer');
-const { Shazam } = require('shazamio');
+const FormData = require('form-data');
 
-const shazam = new Shazam();
 const upload = multer({ storage: multer.memoryStorage() });
 
 const app = express();
@@ -481,23 +480,26 @@ app.post('/api/recognize', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Audio file is required' });
   
   try {
-    const result = await shazam.recognize(req.file.buffer);
-    
-    if (!result || !result.track) {
-      console.warn('[shazam] No match found');
-      return res.json({ status: 'error', message: 'Could not identify song.' });
-    }
-
-    const track = result.track;
-    res.json({
-      status: 'success',
-      song: `${track.title} - ${track.subtitle}`,
-      title: track.title,
-      artist: track.subtitle
+    const formData = new FormData();
+    formData.append('file', req.file.buffer, {
+      filename: req.file.originalname || 'recording.webm',
+      contentType: req.file.mimetype
     });
+
+    const response = await fetch('http://127.0.0.1:8000/recognize', {
+      method: 'POST',
+      body: formData,
+      headers: formData.getHeaders()
+    }).catch(err => {
+      console.error('[shazam] Proxy fetch failed:', err.message);
+      throw new Error('Shazam backend unreachable');
+    });
+
+    const data = await response.json();
+    res.json(data);
   } catch (e) {
-    console.error('[shazam] Identification failed:', e.message);
-    res.status(500).json({ status: 'error', message: 'Shazam identification service error' });
+    console.error('[shazam] Recognition error:', e.message);
+    res.status(502).json({ status: 'error', message: 'Identification service error' });
   }
 });
 
