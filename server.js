@@ -313,7 +313,6 @@ async function resolveOdesli(url, country = 'US') {
     { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`, type: 'proxy' },
     { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`, type: 'proxy' },
     { url: `https://corsproxy.io/?${encodeURIComponent(target)}`, type: 'proxy' },
-    { url: `https://thingproxy.freeboard.io/fetch/${target}`, type: 'proxy' },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`, type: 'allorigins' }
   ];
 
@@ -500,15 +499,29 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
 
   const initialTasks = [];
   if (isUrlDrop) {
-    scrapedMeta = await extractMetadataFromUrl(u);
-    if (scrapedMeta && scrapedMeta.title) {
-      const qScraped = `${scrapedMeta.title} ${scrapedMeta.artist || ''}`;
-      initialTasks.push(resolveSearch(qScraped + ' spotify track').then(d => tfSp = d));
-      initialTasks.push(resolveSearch(qScraped + ' youtube music topic').then(d => tfYt = d));
-      initialTasks.push(resolveItunes(qScraped, country).then(d => itRes = d));
-    } else {
-      // Primary scraper failed or was skipped, fallback to Odesli native resolution
+    const isSpecial = u.includes('spotify.com') || u.includes('amazon.');
+    
+    if (isSpecial) {
+      // Straight to Odesli for Spotify/Amazon
       initialTasks.push(resolveOdesli(u, country).then(d => od = d));
+    } else {
+      // Parallel race for others (YouTube, Apple, etc.)
+      initialTasks.push(resolveOdesli(u, country).then(d => od = d));
+      initialTasks.push(extractMetadataFromUrl(u).then(d => scrapedMeta = d));
+    }
+    
+    await Promise.allSettled(initialTasks);
+    initialTasks.length = 0;
+
+    const bestTitle = od?.entitiesByUniqueId?.[od?.entityUniqueId]?.title || scrapedMeta?.title;
+    const bestArtist = od?.entitiesByUniqueId?.[od?.entityUniqueId]?.artistName || scrapedMeta?.artist;
+
+    if (bestTitle) {
+      const qMeta = `${bestTitle} ${bestArtist || ''}`;
+      initialTasks.push(resolveSearch(qMeta + ' spotify track').then(d => tfSp = d));
+      initialTasks.push(resolveSearch(qMeta + ' youtube music topic').then(d => tfYt = d));
+      initialTasks.push(resolveSearch(qMeta + ' youtube music track').then(d => tfYt = d)); // Extra coverage
+      initialTasks.push(resolveItunes(qMeta, country).then(d => itRes = d));
     }
   } else if (qBase) {
     initialTasks.push(resolveSearch(qBase + ' spotify track').then(d => tfSp = d));
