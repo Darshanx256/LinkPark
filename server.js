@@ -480,19 +480,26 @@ app.post('/api/recognize', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Audio file is required' });
   
   try {
+    // 1. Quick health check to see if Python is even alive
+    const health = await fetch('http://localhost:8000/health').catch(() => null);
+    if (!health || !health.ok) {
+      console.error('[shazam] Python backend (/health) is unreachable on localhost:8000');
+      return res.status(502).json({ status: 'error', message: 'Recognition engine is booting up or offline' });
+    }
+
     const formData = new FormData();
     formData.append('file', req.file.buffer, {
       filename: req.file.originalname || 'recording.webm',
       contentType: req.file.mimetype
     });
 
-    const response = await fetch('http://127.0.0.1:8000/recognize', {
+    const response = await fetch('http://localhost:8000/recognize', {
       method: 'POST',
       body: formData,
       headers: formData.getHeaders()
     }).catch(err => {
       console.error('[shazam] Proxy fetch failed:', err.message);
-      throw new Error('Shazam backend unreachable');
+      throw new Error('Shazam backend connection failed');
     });
 
     const data = await response.json();

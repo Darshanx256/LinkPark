@@ -6,6 +6,10 @@ import os
 app = FastAPI()
 shazam = Shazam()
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 @app.post("/recognize")
 async def recognize(file: UploadFile = File(...)):
     try:
@@ -26,4 +30,4 @@ async def recognize(file: UploadFile = File(...)):
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="localhost", port=8000)
