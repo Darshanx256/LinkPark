@@ -352,7 +352,13 @@ document.getElementById('searchForm')?.addEventListener('submit', e => {
   if (isUrl) { clearTimeout(timer); closeDD(); resolve(v); }
 });
 
+let lastResolvedKey = null;
+
 async function resolve(data) {
+  const currentKey = typeof data === 'string' ? data.trim() : (data ? `${data.title}|${data.artist}` : '');
+  if (currentKey && currentKey === lastResolvedKey) return;
+  lastResolvedKey = currentKey;
+  
   const myId = ++lastResolveId;
   let item = typeof data === 'object' ? data : null;
   const isUrl = typeof data === 'string';
