@@ -6,6 +6,14 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const multer = require('multer');
 const FormData = require('form-data');
+const { spawn } = require('child_process');
+
+// ─── Integrated Python Shazam Backend ───
+const pythonProcess = spawn('python3', ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000']);
+
+pythonProcess.stdout.on('data', (data) => console.log(`[python-out] ${data}`));
+pythonProcess.stderr.on('data', (data) => console.error(`[python-err] ${data}`));
+pythonProcess.on('close', (code) => console.error(`[python] Process exited with code ${code}`));
 
 const upload = multer({ storage: multer.memoryStorage() });
 
