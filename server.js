@@ -238,9 +238,17 @@ async function extractMetadataFromUrl(url) {
     });
     if (r.ok) {
       const html = await r.text();
-      const ogTitleMatch = html.match(/<meta property="og:title" content="(.*?)"/i);
       const titleMatch = html.match(/<title>(.*?)<\/title>/i);
-      let pageTitle = (ogTitleMatch ? ogTitleMatch[1] : (titleMatch ? titleMatch[1] : '')).trim();
+      const ogTitleMatch = html.match(/<meta property="og:title" content="(.*?)"/i);
+      
+      let pageTitle = '';
+      const t = (titleMatch ? titleMatch[1] : '').trim();
+      const og = (ogTitleMatch ? ogTitleMatch[1] : '').trim();
+      
+      // Prioritize the one with more information (usually the <title> tag)
+      if (t.includes(' - ') || t.includes(' by ') || t.includes(' • ')) pageTitle = t;
+      else if (og.includes(' - ') || og.includes(' by ') || og.includes(' • ')) pageTitle = og;
+      else pageTitle = t || og;
       
       if (!pageTitle) return null;
       
