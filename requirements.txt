@@ -2,3 +2,4 @@ shazamio
 fastapi
 uvicorn
 python-multipart
+pyaudioop
