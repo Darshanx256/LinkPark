@@ -547,8 +547,8 @@ header p {
 
 .copy-btn {
   flex-shrink: 0;
-  padding: 0;
-  margin-left: 1rem;
+  padding: 0 0 0 0.8rem;
+  margin-left: 0.8rem;
   height: 32px;
   background: none;
   border: none;
