@@ -148,7 +148,29 @@ header p {
 .search-wrap {
   position: relative;
   display: flex;
-  gap: 8px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.search-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px #7c6aff28;
+}
+
+.search-input {
+  flex: 1;
+  padding: 0.9rem 1.2rem 0.9rem 0;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.95rem;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .dropdown {
@@ -166,20 +188,20 @@ header p {
   width: 100%;
 }
 
-/* ─── Shazam Button ─── */
 .shazam-btn {
   flex-shrink: 0;
-  width: 48px;
+  width: 42px;
   height: 48px;
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  border: 1px solid var(--border2);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
   color: var(--muted);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   transition: all 0.2s;
+  margin-right: 4px;
 }
 
 .shazam-btn:hover {

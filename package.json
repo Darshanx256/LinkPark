@@ -4,7 +4,7 @@
   "description": "Cross-platform music link resolver",
   "main": "server.js",
   "scripts": {
-    "start": "python3 app.py & node server.js"
+    "start": "./start.sh"
   },
   "dependencies": {
     "cors": "^2.8.5",

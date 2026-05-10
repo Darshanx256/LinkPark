@@ -490,12 +490,15 @@ app.post('/api/recognize', upload.single('file'), async (req, res) => {
       method: 'POST',
       body: formData,
       headers: formData.getHeaders()
+    }).catch(err => {
+      console.error('[shazam] Fetch failed:', err.message);
+      throw new Error('Shazam backend unreachable (app.py not running?)');
     });
 
     if (!response.ok) {
       const errText = await response.text();
       console.error('[shazam] Backend error:', errText);
-      return res.status(502).json({ status: 'error', message: 'Shazam backend unreachable' });
+      return res.status(502).json({ status: 'error', message: 'Shazam backend returned error: ' + errText });
     }
 
     const data = await response.json();
