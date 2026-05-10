@@ -9,11 +9,26 @@ const FormData = require('form-data');
 const { spawn } = require('child_process');
 
 // ─── Integrated Python Shazam Backend ───
-const pythonProcess = spawn('python3', ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000']);
+const startPython = (cmd) => {
+  console.log(`[python] Attempting to start with: ${cmd}`);
+  const proc = spawn(cmd, ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000']);
+  
+  proc.stdout.on('data', (data) => console.log(`[python-out] ${data}`));
+  proc.stderr.on('data', (data) => console.error(`[python-err] ${data}`));
+  
+  proc.on('error', (err) => {
+    console.error(`[python] Failed to start ${cmd}: ${err.message}`);
+    if (cmd === 'python3') startPython('python');
+  });
 
-pythonProcess.stdout.on('data', (data) => console.log(`[python-out] ${data}`));
-pythonProcess.stderr.on('data', (data) => console.error(`[python-err] ${data}`));
-pythonProcess.on('close', (code) => console.error(`[python] Process exited with code ${code}`));
+  proc.on('close', (code) => {
+    if (code !== null && code !== 0) console.error(`[python] Process exited with code ${code}`);
+  });
+  
+  return proc;
+};
+
+let pythonProcess = startPython('python3');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
