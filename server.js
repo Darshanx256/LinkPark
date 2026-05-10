@@ -200,7 +200,7 @@ function cleanupTitle(title, artist) {
   } else if (artist && clean.toLowerCase().endsWith(' - ' + artist.toLowerCase())) {
     clean = clean.substring(0, clean.length - (artist.length + 3)).trim();
   }
-  
+
   return clean.trim();
 }
 
@@ -218,7 +218,7 @@ async function extractMetadataFromUrl(url) {
         const data = await r.json();
         let artist = (data.author_name || '').replace(/ - Topic$/i, '').trim();
         let song = data.title || '';
-        
+
         if (song.includes(' - ')) {
           const parts = song.split(' - ');
           if (parts[0].trim().toLowerCase() === artist.toLowerCase()) {
@@ -235,30 +235,30 @@ async function extractMetadataFromUrl(url) {
 
   // 2. Generic Scraper Fallback
   try {
-    const r = await fetch(url, { 
+    const r = await fetch(url, {
       headers: { 'User-Agent': getUA(), 'Accept-Language': 'en-US,en;q=0.9' },
-      timeout: 7000 
+      timeout: 7000
     });
     if (r.ok) {
       const html = await r.text();
       const titleMatch = html.match(/<title>(.*?)<\/title>/i);
       const ogTitleMatch = html.match(/<meta property="og:title" content="(.*?)"/i);
-      
+
       let pageTitle = '';
       const t = (titleMatch ? titleMatch[1] : '').trim();
       const og = (ogTitleMatch ? ogTitleMatch[1] : '').trim();
-      
+
       // Prioritize the one with more information (usually the <title> tag)
       if (t.includes(' - ') || t.includes(' by ') || t.includes(' • ')) pageTitle = t;
       else if (og.includes(' - ') || og.includes(' by ') || og.includes(' • ')) pageTitle = og;
       else pageTitle = t || og;
-      
+
       if (!pageTitle) return null;
-      
+
       // Pattern matching based on common streaming service titles
       let artist = '', song = pageTitle;
       const separators = [' • ', ' | ', ' - '];
-      
+
       if (url.includes('spotify.com')) {
         const clean = pageTitle.split('|')[0].trim();
         const spSeps = [' - song and lyrics by ', ' - song by ', ' - Single by ', ' by '];
@@ -288,11 +288,11 @@ async function extractMetadataFromUrl(url) {
           }
         }
       }
-      
+
       return { artist, title: cleanupTitle(song, artist) };
     }
   } catch (e) { console.warn(`[scraper] Failed for ${url}: ${e.message}`); }
-  
+
   return null;
 }
 
@@ -500,7 +500,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   const initialTasks = [];
   if (isUrlDrop) {
     const isSpecial = u.includes('spotify.com') || u.includes('amazon.');
-    
+
     if (isSpecial) {
       // Straight to Odesli for Spotify/Amazon
       initialTasks.push(resolveOdesli(u, country).then(d => od = d));
@@ -509,7 +509,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
       initialTasks.push(resolveOdesli(u, country).then(d => od = d));
       initialTasks.push(extractMetadataFromUrl(u).then(d => scrapedMeta = d));
     }
-    
+
     await Promise.allSettled(initialTasks);
     initialTasks.length = 0;
 
@@ -617,7 +617,22 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
     preview: itTrack?.previewUrl || null
   };
 
-  cacheSet(resolveCacheKey, JSON.stringify(responseData));
+  const responseString = JSON.stringify(responseData);
+  cacheSet(resolveCacheKey, responseString);
+  
+  // Cross-Platform Cache Indexing:
+  // Cache the same result for every individual platform link discovered.
+  // This ensures that pasting any of the results back into the app triggers an O(1) hit.
+  if (responseData.links) {
+    Object.values(responseData.links).forEach(link => {
+      if (typeof link !== 'string') return;
+      let norm = link.trim().replace('music.youtube.com', 'youtube.com');
+      if (norm.includes('youtube.com/shorts/')) norm = norm.replace('youtube.com/shorts/', 'youtube.com/watch?v=');
+      const linkKey = `res:${norm}:::${country || 'US'}`;
+      cacheSet(linkKey, responseString);
+    });
+  }
+
   res.json(responseData);
 });
 
