@@ -136,18 +136,30 @@ const errEl = document.getElementById('err');
 const cardEl = document.getElementById('card');
 const linksEl = document.getElementById('links');
 const logoEl = document.querySelector('.logo');
+const gridEl = document.getElementById('grid-container');
+const shazamBtn = document.getElementById('shazamBtn');
+
+// Dual audio engine for crossfade (separate from LinkPark's main card player)
+let gridAudio1 = new Audio();
+let gridAudio2 = new Audio();
+let gridActiveAudio = gridAudio1;
+let fadeInterval = null;
+let currentGridCard = null;
+let autoFadeTriggered = false;
 
 if (logoEl) {
   logoEl.addEventListener('click', () => {
     qEl.value = '';
     closeDD();
     cardEl.style.display = 'none';
+    if (typeof gridEl !== 'undefined') gridEl.style.display = 'none';
     errEl.style.display = 'none';
     currentData = null;
     const url = new URL(window.location.href);
     url.searchParams.delete('s');
     window.history.replaceState({}, '', url);
     audio.pause();
+    if (typeof gridActiveAudio !== 'undefined') gridActiveAudio.pause();
   });
 }
 
@@ -348,8 +360,16 @@ document.getElementById('searchForm')?.addEventListener('submit', e => {
   const v = qEl.value.trim();
   if (!v) return;
   if (ddEl.style.display === 'block' && idx >= 0) { pick(idx); return; }
+  
   const isUrl = /^(https?:\/\/|spotify:track:)/i.test(v) || (!/\s/.test(v) && v.includes('.'));
-  if (isUrl) { clearTimeout(timer); closeDD(); resolve(v); }
+  if (isUrl) { 
+    clearTimeout(timer); closeDD(); 
+    gridEl.style.display = 'none';
+    resolve(v); 
+  } else {
+    clearTimeout(timer); closeDD();
+    fetchGrid(v);
+  }
 });
 
 let lastResolvedKey = null;
@@ -592,6 +612,171 @@ setInterval(() => {
     }, 500);
   }
 }, 3000);
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SHAZAM & GRID DASHBOARD LOGIC
+// ─────────────────────────────────────────────────────────────────────────────
+
+shazamBtn?.addEventListener('click', async () => {
+  if (shazamBtn.classList.contains('recording') || shazamBtn.classList.contains('processing')) return;
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mediaRecorder = new MediaRecorder(stream);
+    const audioChunks = [];
+
+    mediaRecorder.addEventListener("dataavailable", e => audioChunks.push(e.data));
+    mediaRecorder.addEventListener("stop", async () => {
+      stream.getTracks().forEach(t => t.stop());
+      shazamBtn.classList.remove('recording');
+      shazamBtn.classList.add('processing');
+      qEl.value = "Analyzing audio signature...";
+
+      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+      const formData = new FormData();
+      formData.append('file', blob, 'recording.webm');
+
+      try {
+        const url = PROXY_URL ? `${PROXY_URL}/api/recognize` : '/api/recognize';
+        const res = await fetch(url, { method: 'POST', body: formData });
+        const data = await res.json();
+        shazamBtn.classList.remove('processing');
+
+        if (data.status === 'success' && data.song) {
+          qEl.value = data.song;
+          fetchGrid(data.song);
+        } else {
+          qEl.value = "";
+          qEl.placeholder = data.message || "Could not identify song.";
+        }
+      } catch (err) {
+        shazamBtn.classList.remove('processing');
+        qEl.value = "";
+        qEl.placeholder = "Recognition failed.";
+      }
+    });
+
+    mediaRecorder.start();
+    shazamBtn.classList.add('recording');
+    qEl.value = "Listening...";
+    setTimeout(() => { if (mediaRecorder.state === 'recording') mediaRecorder.stop(); }, 5000);
+
+  } catch (err) {
+    alert("Microphone access required for recognition.");
+  }
+});
+
+async function fetchGrid(query) {
+  gridEl.innerHTML = '<div class="loader" style="display:block; margin-top:2rem;"><span></span><span></span><span></span></div>';
+  gridEl.style.display = 'grid';
+  cardEl.style.display = 'none';
+
+  try {
+    const r = await fetch(`https://itunes.apple.com/search?term=${enc(query)}&entity=song&limit=12&country=${COUNTRY}`);
+    const d = await r.json();
+    const songs = (d.results || []).filter(s => s.previewUrl);
+
+    if (!songs.length) {
+      gridEl.innerHTML = '<div class="err-msg">No playable tracks found for that search.</div>';
+      return;
+    }
+
+    gridEl.innerHTML = '';
+    songs.forEach(t => {
+      const trackData = {
+        title: t.trackName,
+        artist: t.artistName,
+        art: t.artworkUrl100.replace('100x100bb', '600x600bb'),
+        thumb: t.artworkUrl60,
+        previewUrl: t.previewUrl,
+        appleUrl: t.trackViewUrl,
+        album: t.collectionName
+      };
+
+      const div = document.createElement('div');
+      div.className = 'grid-card';
+      div.innerHTML = `
+        <div class="playing-indicator">
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+        </div>
+        <img src="${trackData.art}" alt="cover" loading="lazy">
+        <div class="title" title="${esc(trackData.title)}">${esc(trackData.title)}</div>
+        <div class="artist" title="${esc(trackData.artist)}">${esc(trackData.artist)}</div>
+      `;
+
+      div.addEventListener('click', () => {
+        playGridTrack(trackData.previewUrl, div);
+        resolve(trackData); 
+      });
+      gridEl.appendChild(div);
+    });
+  } catch (err) {
+    gridEl.innerHTML = '<div class="error" style="display:block">Failed to connect to iTunes.</div>';
+  }
+}
+
+function playGridTrack(url, card) {
+  if (currentGridCard === card) {
+    if (!gridActiveAudio.paused) {
+      gridActiveAudio.pause();
+      card.classList.remove('active');
+    } else {
+      gridActiveAudio.play();
+      card.classList.add('active');
+    }
+    return;
+  }
+
+  if (typeof audio !== 'undefined' && !audio.paused) audio.pause();
+
+  if (currentGridCard) currentGridCard.classList.remove('active');
+  card.classList.add('active');
+  currentGridCard = card;
+
+  const inactiveAudio = (gridActiveAudio === gridAudio1) ? gridAudio2 : gridAudio1;
+  inactiveAudio.src = url;
+  inactiveAudio.volume = 0; 
+  inactiveAudio.play().catch(() => {});
+  
+  autoFadeTriggered = false; 
+  if (fadeInterval) clearInterval(fadeInterval);
+
+  const fadeSteps = 24;
+  let step = 0;
+  const startVol = gridActiveAudio.volume;
+
+  fadeInterval = setInterval(() => {
+    step++;
+    const frac = step / fadeSteps;
+    gridActiveAudio.volume = Math.max(0, startVol * (1 - frac));
+    inactiveAudio.volume = Math.min(1, frac);
+    if (step >= fadeSteps) {
+      clearInterval(fadeInterval);
+      gridActiveAudio.pause();
+      gridActiveAudio = inactiveAudio;
+    }
+  }, 50);
+  
+  inactiveAudio.ontimeupdate = () => {
+    if (!autoFadeTriggered && inactiveAudio.duration && inactiveAudio.currentTime >= inactiveAudio.duration - 1.5) {
+      autoFadeTriggered = true;
+      const nextCard = card.nextElementSibling;
+      if (nextCard && nextCard.classList.contains('grid-card')) nextCard.click(); 
+    }
+  };
+
+  inactiveAudio.onended = () => {
+    card.classList.remove('active');
+    if (currentGridCard === card) currentGridCard = null;
+  };
+}
+
+document.getElementById('playBtn')?.addEventListener('click', () => {
+   if (!gridActiveAudio.paused) {
+       gridActiveAudio.pause();
+       if (currentGridCard) currentGridCard.classList.remove('active');
+   }
+});
 
 if (PROXY_URL) {
   fetchAndSolveChallenge();

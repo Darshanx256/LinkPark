@@ -4,6 +4,10 @@ const fetch = require('node-fetch');
 const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
+const multer = require('multer');
+const FormData = require('form-data');
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -118,6 +122,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.use(express.json());
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
@@ -469,6 +474,36 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
   const data = await resolveSearch(query);
   if (data) return res.json(data);
   res.status(502).json({ error: 'Search failed' });
+});
+
+app.post('/api/recognize', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Audio file is required' });
+  
+  try {
+    const formData = new FormData();
+    formData.append('file', req.file.buffer, {
+      filename: req.file.originalname || 'recording.webm',
+      contentType: req.file.mimetype
+    });
+
+    const response = await fetch('http://127.0.0.1:8000/recognize', {
+      method: 'POST',
+      body: formData,
+      headers: formData.getHeaders()
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('[shazam] Backend error:', errText);
+      return res.status(502).json({ status: 'error', message: 'Shazam backend unreachable' });
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (e) {
+    console.error('[shazam] Proxy error:', e.message);
+    res.status(500).json({ status: 'error', message: 'Internal shazam proxy error' });
+  }
 });
 
 app.get('/api/resolve', requireApiAccess, async (req, res) => {

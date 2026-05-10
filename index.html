@@ -39,6 +39,13 @@
 
     <main>
       <form class="search-wrap" id="searchForm" role="search">
+        <button type="button" id="shazamBtn" class="shazam-btn" title="Identify playing music" aria-label="Shazam">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="22"></line>
+          </svg>
+        </button>
         <input class="search-input" id="q" type="search" placeholder="Search a song…" autocomplete="off"
           spellcheck="false" aria-label="Search for a song by name, artist, or paste a link">
         <button type="submit" aria-hidden="true" style="display:none"></button>
@@ -46,6 +53,9 @@
       </form>
 
       <p class="hint" id="hint" aria-live="polite">↑ ↓ navigate &nbsp;·&nbsp; Enter select &nbsp;·&nbsp; Esc close</p>
+      
+      <div id="grid-container" class="grid" style="display:none;"></div>
+
       <div class="loader" id="loader" role="status" aria-label="Resolving links…"><span></span><span></span><span></span></div>
       <div class="error" id="err" role="alert"></div>
 
