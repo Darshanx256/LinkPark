@@ -205,6 +205,9 @@ function cleanupTitle(title, artist) {
 }
 
 async function extractMetadataFromUrl(url) {
+  // Skip scraping for services known to block/fail (Spotify, Amazon)
+  if (url.includes('spotify.com') || url.includes('amazon.')) return null;
+
   // 1. YouTube OEmbed
   if (url.includes('youtube.com') || url.includes('youtu.be')) {
     try {
@@ -485,6 +488,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   let od = null;
   let tfSp = null, tfYt = null;
   let itRes = null;
+  let scrapedMeta = null;
 
   // 1. Initial Batch & Normalization
   const clean = (s) => (s || '').trim();
@@ -496,14 +500,14 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
 
   const initialTasks = [];
   if (isUrlDrop) {
-    const meta = await extractMetadataFromUrl(u);
-    if (meta && meta.title) {
-      const qScraped = `${meta.title} ${meta.artist || ''}`;
+    scrapedMeta = await extractMetadataFromUrl(u);
+    if (scrapedMeta && scrapedMeta.title) {
+      const qScraped = `${scrapedMeta.title} ${scrapedMeta.artist || ''}`;
       initialTasks.push(resolveSearch(qScraped + ' spotify track').then(d => tfSp = d));
       initialTasks.push(resolveSearch(qScraped + ' youtube music topic').then(d => tfYt = d));
       initialTasks.push(resolveItunes(qScraped, country).then(d => itRes = d));
     } else {
-      // Primary scraper failed, fallback to Odesli native resolution
+      // Primary scraper failed or was skipped, fallback to Odesli native resolution
       initialTasks.push(resolveOdesli(u, country).then(d => od = d));
     }
   } else if (qBase) {
@@ -593,8 +597,8 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
 
   const responseData = {
     links,
-    title: itTrack?.trackName || ent.title || null,
-    artist: itTrack?.artistName || ent.artistName || null,
+    title: itTrack?.trackName || ent.title || scrapedMeta?.title || null,
+    artist: itTrack?.artistName || ent.artistName || scrapedMeta?.artist || null,
     album: itTrack?.collectionName || null,
     art: itTrack?.artworkUrl100?.replace('100x100bb', '600x600bb') || ent.thumbnailUrl || null,
     preview: itTrack?.previewUrl || null
