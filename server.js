@@ -310,17 +310,20 @@ async function resolveOdesli(url, country = 'US') {
   const target = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(targetUrl)}&userCountry=${country}`;
 
   const proxies = [
-    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`, type: 'proxy' },
-    { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`, type: 'proxy' },
     { url: `https://corsproxy.io/?${encodeURIComponent(target)}`, type: 'proxy' },
+    { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`, type: 'proxy' },
+    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`, type: 'proxy' },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`, type: 'allorigins' }
   ];
 
-  // 1. Shuffled Proxies
-  const shuffled = proxies.sort(() => Math.random() - 0.5);
+  // 1. Shuffled Proxies (prioritizing the first two fast ones)
+  const fast = proxies.slice(0, 2).sort(() => Math.random() - 0.5);
+  const others = proxies.slice(2).sort(() => Math.random() - 0.5);
+  const shuffled = [...fast, ...others];
+
   for (const provider of shuffled) {
     try {
-      const response = await fetch(provider.url, { headers: { 'User-Agent': getUA() }, timeout: 7000 });
+      const response = await fetch(provider.url, { headers: { 'User-Agent': getUA() }, timeout: 4500 });
       if (!response.ok) continue;
       let text = await response.text();
       if (provider.type === 'allorigins') {
@@ -334,7 +337,7 @@ async function resolveOdesli(url, country = 'US') {
 
   // 2. Fallback: Our Proxy (Direct server-side fetch)
   try {
-    const response = await fetch(target, { headers: { 'User-Agent': getUA() }, timeout: 8000 });
+    const response = await fetch(target, { headers: { 'User-Agent': getUA() }, timeout: 6000 });
     if (response.ok) {
       const text = await response.text();
       if (text && !text.trim().startsWith('<')) {
