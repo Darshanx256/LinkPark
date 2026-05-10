@@ -149,7 +149,7 @@ function requireApiAccess(req, res, next) {
 
   const seed = req.get('X-LP-Seed');
   const nonce = req.get('X-LP-Nonce');
-  
+
   if (!seed || !nonce) return deny(req, res, 401, 'missing_pow');
 
   const challenge = activeChallenges.get(seed);
@@ -174,19 +174,131 @@ function requireApiAccess(req, res, next) {
   return next();
 }
 
+function cleanupTitle(title, artist) {
+  if (!title) return '';
+  let clean = title
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/[\u200e\u200f\xa0]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Remove common noise
+  const noise = [
+    /\[Official Music Video\]/i, /\(Official Music Video\)/i,
+    /\[Official Video\]/i, /\(Official Video\)/i,
+    /\[Official Audio\]/i, /\(Official Audio\)/i,
+    /\[Lyric Video\]/i, /\(Lyric Video\)/i,
+    /\[HD\]/i, /\(HD\)/i, /\[4K\]/i, /\(4K\)/i,
+    /\| Official Video/i, /\| Official Audio/i,
+    / - Topic$/i
+  ];
+  noise.forEach(n => clean = clean.replace(n, ''));
+
+  if (artist && clean.toLowerCase().startsWith(artist.toLowerCase() + ' - ')) {
+    clean = clean.substring(artist.length + 3).trim();
+  } else if (artist && clean.toLowerCase().endsWith(' - ' + artist.toLowerCase())) {
+    clean = clean.substring(0, clean.length - (artist.length + 3)).trim();
+  }
+  
+  return clean.trim();
+}
+
+async function extractMetadataFromUrl(url) {
+  // 1. YouTube OEmbed
+  if (url.includes('youtube.com') || url.includes('youtu.be')) {
+    try {
+      const cleanUrl = url.replace('music.youtube.com', 'www.youtube.com');
+      const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`;
+      const r = await fetch(oembedUrl, { timeout: 6000 });
+      if (r.ok) {
+        const data = await r.json();
+        let artist = (data.author_name || '').replace(/ - Topic$/i, '').trim();
+        let song = data.title || '';
+        
+        if (song.includes(' - ')) {
+          const parts = song.split(' - ');
+          if (parts[0].trim().toLowerCase() === artist.toLowerCase()) {
+            song = parts.slice(1).join(' - ').trim();
+          } else {
+            artist = parts[0].trim();
+            song = parts.slice(1).join(' - ').trim();
+          }
+        }
+        return { artist, title: cleanupTitle(song, artist) };
+      }
+    } catch (e) { console.warn(`[oembed] Failed for ${url}: ${e.message}`); }
+  }
+
+  // 2. Generic Scraper Fallback
+  try {
+    const r = await fetch(url, { 
+      headers: { 'User-Agent': getUA(), 'Accept-Language': 'en-US,en;q=0.9' },
+      timeout: 7000 
+    });
+    if (r.ok) {
+      const html = await r.text();
+      const ogTitleMatch = html.match(/<meta property="og:title" content="(.*?)"/i);
+      const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+      let pageTitle = (ogTitleMatch ? ogTitleMatch[1] : (titleMatch ? titleMatch[1] : '')).trim();
+      
+      if (!pageTitle) return null;
+      
+      // Pattern matching based on common streaming service titles
+      let artist = '', song = pageTitle;
+      const separators = [' • ', ' | ', ' - '];
+      
+      if (url.includes('spotify.com')) {
+        const clean = pageTitle.split('|')[0].trim();
+        const spSeps = [' - song and lyrics by ', ' - song by ', ' - Single by ', ' by '];
+        for (const sep of spSeps) {
+          if (clean.includes(sep)) {
+            const parts = clean.split(sep);
+            song = parts[0].trim(); artist = parts[1].trim();
+            break;
+          }
+        }
+      } else if (url.includes('music.apple.com')) {
+        const clean = pageTitle.split(' - Apple')[0].split(' on Apple')[0].trim();
+        if (clean.includes(' - Song by ')) {
+          const parts = clean.split(' - Song by ');
+          song = parts[0].trim(); artist = parts[1].trim();
+        } else if (clean.includes(' by ')) {
+          const parts = clean.split(' by ');
+          song = parts[0].trim(); artist = parts[1].trim();
+        }
+      } else {
+        for (const sep of separators) {
+          if (pageTitle.includes(sep)) {
+            const parts = pageTitle.split(sep);
+            artist = parts[0].trim();
+            song = parts[1].trim();
+            break;
+          }
+        }
+      }
+      
+      return { artist, title: cleanupTitle(song, artist) };
+    }
+  } catch (e) { console.warn(`[scraper] Failed for ${url}: ${e.message}`); }
+  
+  return null;
+}
+
 /** Internal resolution helpers */
 async function resolveOdesli(url, country = 'US') {
-  // Normalize YouTube Music URLs back to standard YouTube for Odesli's engine
-  const targetUrl = url.replace('music.youtube.com', 'youtube.com');
+  // Normalize YouTube Music and Shorts URLs back to standard YouTube for Odesli's engine
+  let targetUrl = url.replace('music.youtube.com', 'youtube.com');
+  if (targetUrl.includes('youtube.com/shorts/')) {
+    targetUrl = targetUrl.replace('youtube.com/shorts/', 'youtube.com/watch?v=');
+  }
   const cacheKey = `od:${targetUrl}:${country}`;
   const cached = cacheGet(cacheKey);
   if (cached) return JSON.parse(cached);
 
   const target = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(targetUrl)}&userCountry=${country}`;
-  
-  // Dynamic Moving Proxy Pool: Expanded list with randomized sequential fallback.
-  const providers = [
-    { url: target, type: 'direct' },
+
+  const proxies = [
     { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`, type: 'proxy' },
     { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`, type: 'proxy' },
     { url: `https://corsproxy.io/?${encodeURIComponent(target)}`, type: 'proxy' },
@@ -194,37 +306,33 @@ async function resolveOdesli(url, country = 'US') {
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`, type: 'allorigins' }
   ];
 
-  // Randomize start index for "moving" effect
-  const shuffled = providers.sort(() => Math.random() - 0.5);
-
+  // 1. Shuffled Proxies
+  const shuffled = proxies.sort(() => Math.random() - 0.5);
   for (const provider of shuffled) {
     try {
-      const headers = { 'User-Agent': getUA() };
-      const response = await fetch(provider.url, { headers, timeout: 7000 });
-      
-      if (!response.ok) {
-        if (response.status === 429) console.warn(`[odesli] 429 Rate Limited: ${provider.url}`);
-        continue;
-      }
-
+      const response = await fetch(provider.url, { headers: { 'User-Agent': getUA() }, timeout: 7000 });
+      if (!response.ok) continue;
       let text = await response.text();
       if (provider.type === 'allorigins') {
         try { text = JSON.parse(text).contents; } catch (e) { continue; }
       }
-
-      // Some proxies might return HTML or error pages with 200 OK
       if (!text || text.trim().startsWith('<')) continue;
-
       const data = JSON.parse(text);
-      if (data.entityUniqueId) {
-        cacheSet(cacheKey, text);
-        return data;
-      }
-    } catch (e) {
-      // Silently fail to next provider
-      continue;
-    }
+      if (data.entityUniqueId) { cacheSet(cacheKey, text); return data; }
+    } catch (e) { continue; }
   }
+
+  // 2. Fallback: Our Proxy (Direct server-side fetch)
+  try {
+    const response = await fetch(target, { headers: { 'User-Agent': getUA() }, timeout: 8000 });
+    if (response.ok) {
+      const text = await response.text();
+      if (text && !text.trim().startsWith('<')) {
+        const data = JSON.parse(text);
+        if (data.entityUniqueId) { cacheSet(cacheKey, text); return data; }
+      }
+    }
+  } catch (e) { console.warn(`[odesli] Direct fallback failed for ${targetUrl}`); }
 
   return null;
 }
@@ -351,9 +459,21 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
 });
 
 app.get('/api/resolve', requireApiAccess, async (req, res) => {
-  const { query, u, artist, album, country } = req.query;
+  const { query, artist, album, country } = req.query;
+  let u = req.query.u;
   const isUrlDrop = u && !query;
-  
+
+  // Pre-normalize URL for consistent cache keys
+  if (u) {
+    u = u.trim().replace('music.youtube.com', 'youtube.com');
+    if (u.includes('youtube.com/shorts/')) u = u.replace('youtube.com/shorts/', 'youtube.com/watch?v=');
+  }
+
+  // Top-level O(1) Cache Lookup
+  const resolveCacheKey = `res:${u || ''}:${query || ''}:${artist || ''}:${country || 'US'}`;
+  const cachedResolve = cacheGet(resolveCacheKey);
+  if (cachedResolve) return res.json(JSON.parse(cachedResolve));
+
   let od = null;
   let tfSp = null, tfYt = null;
   let itRes = null;
@@ -362,19 +482,29 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   const clean = (s) => (s || '').trim();
   const qTitle = clean(query);
   const qArtist = clean(artist);
-  const qBase = (qTitle.toLowerCase().includes(qArtist.toLowerCase())) 
-    ? qTitle 
+  const qBase = (qTitle.toLowerCase().includes(qArtist.toLowerCase()))
+    ? qTitle
     : (qTitle + (qArtist ? ' ' + qArtist : ''));
 
   const initialTasks = [];
-  if (u) initialTasks.push(resolveOdesli(u, country).then(d => od = d));
-  if (qBase) {
+  if (isUrlDrop) {
+    const meta = await extractMetadataFromUrl(u);
+    if (meta && meta.title) {
+      const qScraped = `${meta.title} ${meta.artist || ''}`;
+      initialTasks.push(resolveSearch(qScraped + ' spotify track').then(d => tfSp = d));
+      initialTasks.push(resolveSearch(qScraped + ' youtube music topic').then(d => tfYt = d));
+      initialTasks.push(resolveItunes(qScraped, country).then(d => itRes = d));
+    } else {
+      // Primary scraper failed, fallback to Odesli native resolution
+      initialTasks.push(resolveOdesli(u, country).then(d => od = d));
+    }
+  } else if (qBase) {
     initialTasks.push(resolveSearch(qBase + ' spotify track').then(d => tfSp = d));
     initialTasks.push(resolveSearch(qBase + (album ? ' ' + album : '') + ' youtube music topic').then(d => tfYt = d));
     initialTasks.push(resolveItunes(qBase, country).then(d => itRes = d));
   }
 
-  // Overlap Odesli and Search tasks
+  // Overlap resolution tasks
   await Promise.allSettled(initialTasks);
 
   // 2. Secondary Batch (Fallback/Supplemental)
@@ -388,11 +518,11 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   if (ent.title) {
     const qMeta = `${ent.title} ${ent.artistName || ''}`;
     const secondaryTasks = [];
-    
+
     // Fill Tinyfish gaps
     if (!tfSp) secondaryTasks.push(resolveSearch(qMeta + ' spotify track').then(d => tfSp = d));
     if (!tfYt) secondaryTasks.push(resolveSearch(qMeta + ' youtube music topic').then(d => tfYt = d));
-    
+
     // Fetch iTunes data only for URL drops (client already has it for manual searches)
     if (isUrlDrop) secondaryTasks.push(resolveItunes(qMeta, country).then(d => itRes = d));
 
@@ -453,14 +583,17 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
     }
   }
 
-  res.json({
+  const responseData = {
     links,
     title: itTrack?.trackName || ent.title || null,
     artist: itTrack?.artistName || ent.artistName || null,
     album: itTrack?.collectionName || null,
     art: itTrack?.artworkUrl100?.replace('100x100bb', '600x600bb') || ent.thumbnailUrl || null,
     preview: itTrack?.previewUrl || null
-  });
+  };
+
+  cacheSet(resolveCacheKey, JSON.stringify(responseData));
+  res.json(responseData);
 });
 
 app.get('/api/cache-stats', requireApiAccess, (req, res) => {

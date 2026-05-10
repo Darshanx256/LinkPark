@@ -297,6 +297,14 @@ header p {
   text-align: center;
 }
 
+.err-msg {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
 /* ─── Card ─── */
 .card {
   display: none;

@@ -389,6 +389,30 @@ async function resolve(data) {
     const res = (resolved.status === 'fulfilled') ? resolved.value : null;
     const it = (itunesData.status === 'fulfilled') ? itunesData.value : null;
 
+    // 4. Final Resort: Local Fallback (Fetch at local on user's device)
+    if ((!res || Object.keys(res.links || {}).length === 0) && isUrl) {
+      try {
+        const targetUrl = u.replace('music.youtube.com', 'youtube.com').replace('youtube.com/shorts/', 'youtube.com/watch?v=');
+        const localRes = await fetch(`${ODESLI}?url=${enc(targetUrl)}&userCountry=${COUNTRY}`);
+        if (localRes.ok) {
+          const localData = await localRes.json();
+          if (localData.linksByPlatform) {
+            const localLinks = {};
+            Object.keys(localData.linksByPlatform).forEach(k => localLinks[k] = localData.linksByPlatform[k].url);
+            
+            const ent = localData.entitiesByUniqueId?.[localData.entityUniqueId] || {};
+            const finalT = ent.title || item.title;
+            const finalA = ent.artistName || item.artist;
+            const finalArt = ent.thumbnailUrl || item.art;
+
+            populateUI(finalT, finalA, finalArt, item.previewUrl, localLinks);
+            currentData = { t: finalT, a: finalA, itunesId: null, l: localLinks };
+            return;
+          }
+        }
+      } catch (err) { console.warn('Local fallback failed:', err); }
+    }
+
     if (!res) { showErr('Failed to resolve song links.'); return; }
     if (!item) item = { title: '', artist: '', art: '', previewUrl: null };
 
@@ -449,9 +473,15 @@ function populateUI(title, artist, art, preview, links) {
   }
 
   linksEl.innerHTML = '';
-  if (!links) {
+  if (!links || Object.keys(links).length === 0) {
     const shareBtn = document.getElementById('shareCardBtn');
     if (shareBtn) shareBtn.classList.add('skeleton');
+    
+    if (links) { // Explicitly empty links
+      linksEl.innerHTML = '<div class="err-msg">No links found for this song.</div>';
+      return;
+    }
+
     for (let i = 0; i < 5; i++) {
       const row = document.createElement('div');
       row.className = 'prow skeleton';
@@ -529,7 +559,13 @@ function makeRow(p, href) {
 }
 
 function setLoad(on) {
-  if (on && typeof audio !== 'undefined') { try { audio.pause(); } catch (e) { } }
+  if (on && typeof audio !== 'undefined') { 
+    try { 
+      audio.pause(); 
+      audio.currentTime = 0;
+      updatePlayBtn();
+    } catch (e) { } 
+  }
   if (on && cardEl.style.display !== 'block') loaderEl.style.display = 'block';
   else loaderEl.style.display = 'none';
   if (on) errEl.style.display = 'none';
