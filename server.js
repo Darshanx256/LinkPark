@@ -480,11 +480,19 @@ app.post('/api/recognize', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Audio file is required' });
   
   try {
-    // 1. Quick health check to see if Python is even alive
-    const health = await fetch('http://localhost:8000/health').catch(() => null);
-    if (!health || !health.ok) {
-      console.error('[shazam] Python backend (/health) is unreachable on localhost:8000');
-      return res.status(502).json({ status: 'error', message: 'Recognition engine is booting up or offline' });
+    // 1. Robust Health Check with Retry (allows for slow Python startup)
+    let isAlive = false;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const health = await fetch('http://localhost:8000/health', { timeout: 1500 });
+        if (health && health.ok) { isAlive = true; break; }
+      } catch (e) {}
+      if (i < 2) await new Promise(r => setTimeout(r, 1500)); // Wait before retry
+    }
+
+    if (!isAlive) {
+      console.error('[shazam] Python backend (/health) remains unreachable after retries');
+      return res.status(502).json({ status: 'error', message: 'Recognition engine is still booting up' });
     }
 
     const formData = new FormData();
