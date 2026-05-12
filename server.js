@@ -6,6 +6,9 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 
 const app = express();
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
 const PORT = process.env.PORT || 3000;
 const TOKEN_TTL_SECONDS = parsePositiveInt(process.env.PROXY_TOKEN_TTL_SECONDS, 300);
 const SESSION_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.SESSION_RATE_LIMIT_WINDOW_MS, 60 * 1000);
@@ -119,10 +122,79 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+/** Security Headers */
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Content Security Policy (CSP)
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'", // unsafe-inline for config.js error handler
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: https:",
+    "connect-src 'self' https:",
+    "media-src 'self' https: data: blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'"
+  ].join('; ');
+  res.setHeader('Content-Security-Policy', csp);
+  next();
+});
+
 function isAllowedOrigin(origin) {
-  if (!origin) return true;
   if (ALLOWED_ORIGINS.length === 0) return true;
-  return ALLOWED_ORIGINS.some(allowed => origin === allowed || origin.endsWith('.' + allowed));
+  if (!origin) return false;
+  
+  try {
+    const originHost = new URL(origin).hostname.toLowerCase();
+    return ALLOWED_ORIGINS.some(allowed => {
+      const allowedLower = allowed.toLowerCase();
+      return originHost === allowedLower || originHost.endsWith('.' + allowedLower);
+    });
+  } catch (e) {
+    // If origin is not a valid URL (e.g. "null" or malformed)
+    return ALLOWED_ORIGINS.some(allowed => origin === allowed || origin.endsWith('.' + allowed));
+  }
+}
+
+/**
+ * Validates that a URL belongs to a trusted music service.
+ * Prevents SSRF by blocking internal IPs, localhost, and non-whitelisted domains.
+ */
+function isValidMusicUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!['http:', 'https:'].includes(u.protocol)) return false;
+
+    // Block localhost and private IP ranges
+    const host = u.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1') return false;
+    
+    // Simple check for private IP ranges (RFC 1918)
+    const privateIpRegex = /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)/;
+    if (privateIpRegex.test(host)) return false;
+
+    const allowedDomains = [
+      'spotify.com', 'open.spotify.com',
+      'apple.com', 'music.apple.com', 'itunes.apple.com',
+      'youtube.com', 'www.youtube.com', 'music.youtube.com', 'youtu.be',
+      'tidal.com', 'listen.tidal.com',
+      'deezer.com', 'www.deezer.com',
+      'amazon.com', 'music.amazon.com',
+      'pandora.com', 'www.pandora.com',
+      'soundcloud.com', 'www.soundcloud.com',
+      'song.link', 'api.song.link', 'odesli.co'
+    ];
+
+    return allowedDomains.some(domain => host === domain || host.endsWith('.' + domain));
+  } catch (e) {
+    return false;
+  }
 }
 
 function hasCompatibleFetchMetadata(req) {
@@ -205,8 +277,9 @@ function cleanupTitle(title, artist) {
 }
 
 async function extractMetadataFromUrl(url) {
+  if (!isValidMusicUrl(url)) return null;
+
   // Skip scraping for services known to block/fail (Spotify, Amazon)
-  if (url.includes('spotify.com') || url.includes('amazon.')) return null;
 
   // 1. YouTube OEmbed
   if (url.includes('youtube.com') || url.includes('youtu.be')) {
@@ -298,6 +371,8 @@ async function extractMetadataFromUrl(url) {
 
 /** Internal resolution helpers */
 async function resolveOdesli(url, country = 'US') {
+  if (!isValidMusicUrl(url)) return null;
+
   // Normalize YouTube Music and Shorts URLs back to standard YouTube for Odesli's engine
   let targetUrl = url.replace('music.youtube.com', 'youtube.com');
   if (targetUrl.includes('youtube.com/shorts/')) {
@@ -449,14 +524,30 @@ async function resolveItunes(query, country = 'US') {
 }
 
 app.get('/api/challenge', requireAllowedOrigin, (req, res) => {
+  const ip = getClientIp(req);
+  if (!consumeRateLimit(sessionLimit, ip, SESSION_RATE_LIMIT_WINDOW_MS, SESSION_RATE_LIMIT_MAX)) {
+    return deny(req, res, 429, 'too_many_challenges');
+  }
+
   const seed = crypto.randomBytes(16).toString('hex');
   const origin = req.get('origin');
-  activeChallenges.set(seed, { origin, expiresAt: Date.now() + 2 * 60 * 1000 });
+  activeChallenges.set(seed, { origin, expiresAt: Date.now() + 60 * 1000 });
   res.json({ seed, difficulty: POW_DIFFICULTY });
 });
 
+function validateCountry(c) {
+  if (!c) return 'US';
+  const clean = c.toUpperCase().trim();
+  return /^[A-Z]{2}$/.test(clean) ? clean : 'US';
+}
+
+function validateString(s, max = 200) {
+  return (s || '').toString().substring(0, max).trim();
+}
+
 app.get('/api/odesli', requireApiAccess, async (req, res) => {
-  const { url, userCountry } = req.query;
+  const url = validateString(req.query.url, 500);
+  const userCountry = validateCountry(req.query.userCountry);
   if (!url) return res.status(400).json({ error: 'URL is required' });
   const data = await resolveOdesli(url, userCountry);
   if (data) return res.json(data);
@@ -464,7 +555,7 @@ app.get('/api/odesli', requireApiAccess, async (req, res) => {
 });
 
 app.get('/api/search', requireApiAccess, async (req, res) => {
-  const { query } = req.query;
+  const query = validateString(req.query.query, 300);
   if (!query) return res.status(400).json({ error: 'Query is required' });
   const data = await resolveSearch(query);
   if (data) return res.json(data);
@@ -472,8 +563,11 @@ app.get('/api/search', requireApiAccess, async (req, res) => {
 });
 
 app.get('/api/resolve', requireApiAccess, async (req, res) => {
-  const { query, artist, album, country } = req.query;
-  let u = req.query.u;
+  const query = validateString(req.query.query, 300);
+  const artist = validateString(req.query.artist, 200);
+  const album = validateString(req.query.album, 200);
+  const country = validateCountry(req.query.country);
+  let u = validateString(req.query.u, 500);
   const isUrlDrop = u && !query;
 
   // Pre-normalize URL for consistent cache keys
