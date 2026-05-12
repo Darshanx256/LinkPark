@@ -149,15 +149,21 @@ app.use((req, res, next) => {
 function isAllowedOrigin(origin) {
   if (ALLOWED_ORIGINS.length === 0) return true;
   if (!origin) return false;
-  
+
+  // 1. Try direct match first (matches full Origin URL if SERVICE contains URLs)
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+
   try {
     const originHost = new URL(origin).hostname.toLowerCase();
     return ALLOWED_ORIGINS.some(allowed => {
-      const allowedLower = allowed.toLowerCase();
-      return originHost === allowedLower || originHost.endsWith('.' + allowedLower);
+      let allowedHost = allowed.toLowerCase();
+      if (allowedHost.startsWith('http')) {
+        try { allowedHost = new URL(allowedHost).hostname; } catch (e) {}
+      }
+      return originHost === allowedHost || originHost.endsWith('.' + allowedHost);
     });
   } catch (e) {
-    // If origin is not a valid URL (e.g. "null" or malformed)
+    // Fallback for non-URL origins (like "null")
     return ALLOWED_ORIGINS.some(allowed => origin === allowed || origin.endsWith('.' + allowed));
   }
 }
