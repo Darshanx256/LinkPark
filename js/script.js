@@ -13,6 +13,7 @@ let currentData = null; // Stores currently resolved track for sharing
 const challengeQueue = []; // Array of { promise, ts }
 let isSearching = false;
 let resultIdx = -1; // Global keyboard navigation index for results grid
+const FAVS_KEY = 'lp_favs';
 
 async function solvePoW(seed, difficulty) {
   const target = '0'.repeat(difficulty);
@@ -153,6 +154,8 @@ const cardEl = document.getElementById('card');
 const linksEl = document.getElementById('links');
 const logoEl = document.querySelector('.logo');
 const resultsGridEl = document.getElementById('resultsGrid');
+const favsSectionEl = document.getElementById('favsSection');
+const favsGridEl = document.getElementById('favsGrid');
 const wrapEl = document.querySelector('.wrap');
 
 if (logoEl) {
@@ -166,6 +169,7 @@ if (logoEl) {
     currentData = null;
     isSearching = false;
     resultIdx = -1;
+    renderFavs();
     const url = new URL(window.location.href);
     url.searchParams.delete('s');
     window.history.replaceState({}, '', url);
@@ -331,6 +335,8 @@ window.addEventListener('load', async () => {
       }
       setLoad(false);
     }
+  } else {
+    renderFavs();
   }
 });
 
@@ -356,6 +362,7 @@ qEl.addEventListener('input', () => {
     resultsGridEl.style.display = 'none';
     setWide(false);
     resultIdx = -1;
+    renderFavs();
     return;
   }
   if (!/\s/.test(v) && /^(https?:\/\/|spotify:track:)/i.test(v)) {
@@ -444,8 +451,86 @@ document.getElementById('searchForm')?.addEventListener('submit', e => {
   else { search(v); }
 });
 
+function getFavs() {
+  try { return JSON.parse(localStorage.getItem(FAVS_KEY) || '[]'); }
+  catch (e) { return []; }
+}
+
+function saveFavs(favs) {
+  localStorage.setItem(FAVS_KEY, JSON.stringify(favs.slice(0, 50)));
+}
+
+function toggleFav(data) {
+  if (!data.t || !data.a) return;
+  const favs = getFavs();
+  const key = `${data.t}|${data.a}`;
+  const idx = favs.findIndex(f => `${f.t}|${f.a}` === key);
+  
+  if (idx > -1) {
+    favs.splice(idx, 1);
+  } else {
+    favs.unshift({ ...data, ts: Date.now() });
+  }
+  saveFavs(favs);
+  renderFavs();
+  
+  // Update all stars in UI
+  document.querySelectorAll(`.fav-btn[data-key="${key.replace(/"/g, '&quot;')}"]`).forEach(btn => {
+    btn.classList.toggle('active', idx === -1);
+  });
+}
+
+function renderFavs() {
+  const favs = getFavs();
+  if (!favs.length || resultsGridEl.style.display === 'flex' || cardEl.style.display === 'block') {
+    favsSectionEl.style.display = 'none';
+    return;
+  }
+
+  favsSectionEl.style.display = 'flex';
+  favsGridEl.innerHTML = favs.map((it, i) => `
+    <div class="result-item" data-i="${i}" data-preview="${it.preview || ''}" tabindex="0">
+      <button class="fav-btn active" data-key="${(it.t + '|' + it.a).replace(/"/g, '&quot;')}" aria-label="Remove from favorites">
+        <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+      </button>
+      <div class="card-meta">
+        <img class="card-art" src="${it.art || 'assets/logo.webp'}" loading="lazy" alt="${esc(it.t)} artwork">
+        <div class="card-info">
+          <div class="card-title">${esc(it.t)}</div>
+          <div class="card-artist">${esc(it.a)}</div>
+          <div class="player-wrap" ${it.preview ? '' : 'style="display:none"'}>
+             <button class="play-btn" aria-label="Play preview">
+               <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+             </button>
+             <div class="seek-wrap" role="slider">
+               <div class="seek-bar"><div class="seek-fill"></div></div>
+             </div>
+             <div class="time-label">0:00</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  favsGridEl.querySelectorAll('.result-item').forEach((el, i) => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.player-wrap') || e.target.closest('.fav-btn')) return;
+      resolve(favs[i]);
+    });
+    el.querySelector('.fav-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFav(favs[i]);
+    });
+  });
+
+  favsGridEl.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
+  favsGridEl.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
+  updatePlayersUI();
+}
+
 async function search(q) {
   try {
+    favsSectionEl.style.display = 'none';
     renderResultsGrid([], true); // Show skeletons
     const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=10&country=${COUNTRY}`);
     const d = await r.json();
@@ -464,6 +549,7 @@ async function search(q) {
 
 function renderResultsGrid(tracks, isSkeleton = false) {
   cardEl.style.display = 'none';
+  favsSectionEl.style.display = 'none';
   setWide(false);
   resultsGridEl.style.display = 'flex';
   
@@ -486,6 +572,7 @@ function renderResultsGrid(tracks, isSkeleton = false) {
     return;
   }
 
+  const favs = getFavs();
   const tracksItems = tracks.map(t => ({
     appleUrl: t.trackViewUrl,
     title: t.trackName,
@@ -495,8 +582,14 @@ function renderResultsGrid(tracks, isSkeleton = false) {
     album: t.collectionName || '',
   }));
 
-  resultsGridEl.innerHTML = tracksItems.map((it, i) => `
+  resultsGridEl.innerHTML = tracksItems.map((it, i) => {
+    const key = `${it.title}|${it.artist}`;
+    const isSaved = favs.some(f => `${f.t}|${f.a}` === key);
+    return `
     <div class="result-item" data-i="${i}" data-preview="${it.previewUrl || ''}" tabindex="0">
+      <button class="fav-btn ${isSaved ? 'active' : ''}" data-key="${key.replace(/"/g, '&quot;')}" aria-label="Toggle favorite">
+        <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+      </button>
       <div class="card-meta">
         <img class="card-art" src="${it.art}" loading="lazy" alt="${esc(it.title)} album art">
         <div class="card-info">
@@ -514,12 +607,17 @@ function renderResultsGrid(tracks, isSkeleton = false) {
         </div>
       </div>
     </div>
-  `).join('');
+  `; }).join('');
 
-  resultsGridEl.querySelectorAll('.result-item').forEach(el => {
+  resultsGridEl.querySelectorAll('.result-item').forEach((el, i) => {
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.player-wrap')) return;
-      pickResult(tracksItems[el.dataset.i], el);
+      if (e.target.closest('.player-wrap') || e.target.closest('.fav-btn')) return;
+      pickResult(tracksItems[i], el);
+    });
+    el.querySelector('.fav-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const it = tracksItems[i];
+      toggleFav({ t: it.title, a: it.artist, art: it.art, preview: it.previewUrl, l: {} });
     });
   });
 
@@ -636,7 +734,8 @@ function setWide(on) {
 let lastResolvedKey = null;
 
 async function resolve(data) {
-  const currentKey = typeof data === 'string' ? data.trim() : (data ? `${data.title}|${data.artist}` : '');
+  favsSectionEl.style.display = 'none';
+  const currentKey = typeof data === 'string' ? data.trim() : (data ? `${data.t || data.title}|${data.a || data.artist}` : '');
   if (currentKey && currentKey === lastResolvedKey) return;
   lastResolvedKey = currentKey;
   
@@ -734,6 +833,23 @@ function populateUI(title, artist, art, preview, links) {
   const ctitleEl = document.getElementById('ctitle');
   const cartistEl = document.getElementById('cartist');
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+  // Favourites Star
+  let favBtn = document.getElementById('favStar');
+  if (!favBtn) {
+    favBtn = document.createElement('button');
+    favBtn.id = 'favStar';
+    favBtn.className = 'fav-btn';
+    favBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`;
+    document.querySelector('.card .card-meta').appendChild(favBtn);
+    favBtn.addEventListener('click', () => {
+      if (currentData) toggleFav(currentData);
+    });
+  }
+  const key = `${title}|${artist}`;
+  favBtn.setAttribute('data-key', key);
+  favBtn.classList.toggle('active', getFavs().some(f => `${f.t}|${f.a}` === key));
+  favBtn.style.display = title ? 'flex' : 'none';
 
   if (!art && !title) { artEl.src = BLANK; artEl.classList.add('skeleton'); }
   else { artEl.classList.remove('skeleton'); artEl.src = art || 'assets/logo.webp'; }
@@ -863,7 +979,10 @@ function makeRow(p, href) {
 }
 
 function setLoad(on) {
-  if (on && cardEl.style.display !== 'block' && resultsGridEl.style.display !== 'flex') loaderEl.style.display = 'block';
+  if (on && cardEl.style.display !== 'block' && resultsGridEl.style.display !== 'flex') {
+    loaderEl.style.display = 'block';
+    favsSectionEl.style.display = 'none';
+  }
   else loaderEl.style.display = 'none';
   if (on) errEl.style.display = 'none';
 }

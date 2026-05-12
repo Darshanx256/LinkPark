@@ -14,6 +14,7 @@
   --radius-md: 12px;
   --radius-lg: 16px;
   --gap: 0.8rem;
+  --fav: #ffb8f2;
 }
 
 html {
@@ -311,6 +312,38 @@ header p {
   letter-spacing: 0.02em;
 }
 
+/* ─── Favourites Section ─── */
+.favs-section {
+  display: none;
+  flex-direction: column;
+  margin-top: 1.5rem;
+}
+
+.favs-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.favs-header .tag {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: var(--fav);
+  color: #000;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.favs-header h2 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 /* ─── Results Grid ─── */
 .results-grid {
   display: flex;
@@ -503,6 +536,59 @@ header p {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  position: relative;
+}
+
+.fav-btn {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 10;
+}
+
+.fav-btn:hover {
+  transform: scale(1.2);
+  color: var(--fav);
+}
+
+.fav-btn.active {
+  color: var(--fav);
+  filter: drop-shadow(0 0 8px rgba(255, 184, 242, 0.4));
+}
+
+.fav-btn svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  transition: fill 0.2s;
+}
+
+.fav-btn.active svg {
+  fill: currentColor;
+}
+
+.result-item .fav-btn {
+  top: 0.85rem;
+  right: 0.85rem;
+  width: 28px;
+  height: 28px;
+}
+
+.result-item .fav-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 /* ─── Player ─── */
