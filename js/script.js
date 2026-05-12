@@ -1,6 +1,6 @@
 import {
   ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY,
-  COUNTRY, SMAP, SREV, P, PLACEHOLDERS
+  COUNTRY, SMAP, SREV, P, PLACEHOLDERS, SAVED_KEY
 } from './constants.js';
 
 /** 
@@ -13,7 +13,6 @@ let currentData = null; // Stores currently resolved track for sharing
 const challengeQueue = []; // Array of { promise, ts }
 let isSearching = false;
 let resultIdx = -1; // Global keyboard navigation index for results grid
-const FAVS_KEY = 'lp_favs';
 
 async function solvePoW(seed, difficulty) {
   const target = '0'.repeat(difficulty);
@@ -44,11 +43,10 @@ function fetchAndSolveChallenge() {
       const nonce = await solvePoW(seed, difficulty);
       return { seed, nonce, ts };
     } catch (e) {
-      console.error('PoW challenge failed:', e);
+      // Quietly handle challenge failure to prevent blocking search
       const idx = challengeQueue.findIndex(item => item.promise === promise);
       if (idx > -1) challengeQueue.splice(idx, 1);
-      await new Promise(r => setTimeout(r, 2000));
-      throw e;
+      return null; 
     }
   })();
   challengeQueue.push({ promise, ts });
@@ -62,12 +60,13 @@ async function getPoWHeaders() {
   }
   if (challengeQueue.length === 0) fetchAndSolveChallenge();
   try {
-    const { promise } = challengeQueue.shift();
-    const pow = await promise;
+    const item = challengeQueue.shift();
+    if (!item) return {};
+    const pow = await item.promise;
+    if (!pow) return {}; // Failed challenge
     if (challengeQueue.length < 2) fetchAndSolveChallenge();
     return { 'X-LP-Seed': pow.seed, 'X-LP-Nonce': pow.nonce.toString() };
   } catch (e) {
-    if (challengeQueue.length > 0) return getPoWHeaders();
     return {};
   }
 }
@@ -154,8 +153,8 @@ const cardEl = document.getElementById('card');
 const linksEl = document.getElementById('links');
 const logoEl = document.querySelector('.logo');
 const resultsGridEl = document.getElementById('resultsGrid');
-const favsSectionEl = document.getElementById('favsSection');
-const favsGridEl = document.getElementById('favsGrid');
+const stashSectionEl = document.getElementById('stashSection');
+const stashGridEl = document.getElementById('stashGrid');
 const wrapEl = document.querySelector('.wrap');
 
 if (logoEl) {
@@ -169,7 +168,7 @@ if (logoEl) {
     currentData = null;
     isSearching = false;
     resultIdx = -1;
-    renderFavs();
+    renderSaved();
     const url = new URL(window.location.href);
     url.searchParams.delete('s');
     window.history.replaceState({}, '', url);
@@ -180,38 +179,63 @@ if (logoEl) {
 }
 
 let timer = null, idx = -1, items = [];
-const audio = new Audio();
+const audio1 = new Audio();
+const audio2 = new Audio();
+let audio = audio1; // Primary pointer
+let secondaryAudio = audio2;
 let isPlaying = false;
+let isFading = false;
 
-audio.addEventListener('play', () => { isPlaying = true; updatePlayersUI(); });
-audio.addEventListener('pause', () => { isPlaying = false; updatePlayersUI(); });
-audio.addEventListener('ended', () => { isPlaying = false; updatePlayersUI(); });
+let modalPlaylist = [];
+let modalIndex = -1;
+let stashIdx = -1; // For keyboard navigation in modal
+
+audio1.addEventListener('play', () => { isPlaying = true; updatePlayersUI(); });
+audio1.addEventListener('pause', () => { isPlaying = false; updatePlayersUI(); });
+audio1.addEventListener('ended', () => { if (audio === audio1) isPlaying = false; updatePlayersUI(); });
+
+audio2.addEventListener('play', () => { isPlaying = true; updatePlayersUI(); });
+audio2.addEventListener('pause', () => { isPlaying = false; updatePlayersUI(); });
+audio2.addEventListener('ended', () => { if (audio === audio2) isPlaying = false; updatePlayersUI(); });
 
 let lastTimeUpdate = 0;
-audio.addEventListener('timeupdate', () => {
+audio1.addEventListener('timeupdate', (e) => {
   const now = Date.now();
   if (now - lastTimeUpdate < 100) return;
   lastTimeUpdate = now;
   updatePlayersUI();
+  checkCrossfade.call(e.target);
+});
+audio2.addEventListener('timeupdate', (e) => {
+  const now = Date.now();
+  if (now - lastTimeUpdate < 100) return;
+  lastTimeUpdate = now;
+  updatePlayersUI();
+  checkCrossfade.call(e.target);
 });
 
 function updatePlayersUI() {
   const p = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
   const time = formatTime(audio.currentTime);
   const currentSrc = normalizeUrl(audio.src);
+  const secondarySrc = isFading ? normalizeUrl(secondaryAudio.src) : null;
 
   document.querySelectorAll('.player-wrap').forEach(wrap => {
     const item = wrap.closest('[data-preview]') || wrap.closest('.card');
     const itemSrc = normalizeUrl(item?.dataset?.preview || (item?.id === 'card' ? audio.src : ''));
     
-    // Only update if this player corresponds to the current audio source
-    if (itemSrc && itemSrc === currentSrc) {
+    const isCurrent = itemSrc && itemSrc === currentSrc;
+    const isNext = itemSrc && itemSrc === secondarySrc;
+
+    if (isCurrent || isNext) {
       const playBtn = wrap.querySelector('.play-btn');
       const seekFill = wrap.querySelector('.seek-fill');
       const timeLabel = wrap.querySelector('.time-label');
 
       if (playBtn) {
-        if (isPlaying) {
+        // If it's the next song fading in, it's effectively "playing"
+        const effectivePlaying = isPlaying || (isNext && isFading);
+        if (effectivePlaying) {
           playBtn.classList.add('playing');
           playBtn.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
         } else {
@@ -219,8 +243,10 @@ function updatePlayersUI() {
           playBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
         }
       }
-      if (seekFill) seekFill.style.width = `${p}%`;
-      if (timeLabel) timeLabel.textContent = time;
+      if (isCurrent) {
+        if (seekFill) seekFill.style.width = `${p}%`;
+        if (timeLabel) timeLabel.textContent = time;
+      }
     } else {
       // Reset other players
       const playBtn = wrap.querySelector('.play-btn');
@@ -255,7 +281,7 @@ function handlePlayClick(e) {
 
 function handleSeekClick(e) {
   e.stopPropagation();
-  if (!audio.duration) return;
+  if (!audio.duration || isFading) return;
   const rect = e.currentTarget.getBoundingClientRect();
   const wrap = e.currentTarget.closest('.player-wrap');
   const item = wrap.closest('[data-preview]') || wrap.closest('.card');
@@ -265,6 +291,61 @@ function handleSeekClick(e) {
 
   const p = (e.clientX - rect.left) / rect.width;
   audio.currentTime = p * audio.duration;
+}
+
+function crossfadeTo(src, nextIndex) {
+  if (isFading) return;
+  isFading = true;
+  
+  secondaryAudio.src = src;
+  secondaryAudio.volume = 0;
+  secondaryAudio.play();
+  updatePlayersUI(); // Trigger UI update to show next song as playing
+  
+  const fadeTime = 3000;
+  const steps = 30;
+  const interval = fadeTime / steps;
+  let step = 0;
+  
+  const fader = setInterval(() => {
+    step++;
+    const p = step / steps;
+    audio.volume = 1 - p;
+    secondaryAudio.volume = p;
+    
+    if (step >= steps) {
+      clearInterval(fader);
+      audio.pause();
+      audio.volume = 1;
+      
+      // Swap pointers
+      const temp = audio;
+      audio = secondaryAudio;
+      secondaryAudio = temp;
+      
+      modalIndex = nextIndex;
+      isFading = false;
+      updatePlayersUI();
+    }
+  }, interval);
+}
+
+audio1.addEventListener('timeupdate', checkCrossfade);
+audio2.addEventListener('timeupdate', checkCrossfade);
+
+function checkCrossfade() {
+  const currentAudio = this;
+  if (currentAudio !== audio || isFading || modalIndex === -1) return;
+  
+  if (currentAudio.duration && currentAudio.duration - currentAudio.currentTime <= 3) {
+    if (modalIndex < modalPlaylist.length - 1) {
+      const nextIdx = modalIndex + 1;
+      const nextItem = modalPlaylist[nextIdx];
+      if (nextItem.preview) {
+        crossfadeTo(nextItem.preview, nextIdx);
+      }
+    }
+  }
 }
 
 document.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
@@ -336,7 +417,7 @@ window.addEventListener('load', async () => {
       setLoad(false);
     }
   } else {
-    renderFavs();
+    renderSaved();
   }
 });
 
@@ -362,7 +443,7 @@ qEl.addEventListener('input', () => {
     resultsGridEl.style.display = 'none';
     setWide(false);
     resultIdx = -1;
-    renderFavs();
+    renderSaved();
     return;
   }
   if (!/\s/.test(v) && /^(https?:\/\/|spotify:track:)/i.test(v)) {
@@ -391,7 +472,7 @@ function renderDD(tracks) {
     appleUrl: t.trackViewUrl,
     title: t.trackName,
     artist: t.artistName,
-    art: (t.artworkUrl100 || t.artworkUrl60).replace('100x100bb', '600x600bb'),
+    art: (t.artworkUrl100 || t.artworkUrl60).replace('100x100bb', '200x200bb'),
     thumb: t.artworkUrl60,
     previewUrl: t.previewUrl,
     album: t.collectionName || '',
@@ -451,68 +532,68 @@ document.getElementById('searchForm')?.addEventListener('submit', e => {
   else { search(v); }
 });
 
-function getFavs() {
-  try { return JSON.parse(localStorage.getItem(FAVS_KEY) || '[]'); }
+function getSaved() {
+  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); }
   catch (e) { return []; }
 }
 
-function saveFavs(favs) {
-  localStorage.setItem(FAVS_KEY, JSON.stringify(favs.slice(0, 50)));
+function updateSavedStorage(saved) {
+  localStorage.setItem(SAVED_KEY, JSON.stringify(saved.slice(0, 50)));
 }
 
-function toggleFav(data) {
-  if (!data.t || !data.a) return;
-  const favs = getFavs();
-  const key = `${data.t}|${data.a}`;
-  const idx = favs.findIndex(f => `${f.t || f.title}|${f.a || f.artist}` === key);
+function toggleSaved(data) {
+  if (!data.t && !data.title) return;
+  const saved = getSaved();
+  const t = data.t || data.title;
+  const a = data.a || data.artist;
+  const key = `${t}|${a}`;
+  
+  const idx = saved.findIndex(f => `${f.t || f.title}|${f.a || f.artist}` === key);
   
   if (idx > -1) {
-    // If we're toggling an existing favorite and it doesn't have links, but 'data' DOES, update it.
-    if (!favs[idx].l && data.l && Object.keys(data.l).length > 0) {
-      favs[idx].l = data.l;
-      saveFavs(favs);
+    // Update links if missing but available in new data
+    if (!saved[idx].l && data.l && Object.keys(data.l).length > 0) {
+      saved[idx].l = data.l;
     } else {
-      favs.splice(idx, 1);
-      saveFavs(favs);
+      saved.splice(idx, 1);
     }
   } else {
-    // New favorite. Ensure we store it in the internal compact format (t, a, art, preview, l)
-    const entry = {
-      t: data.t || data.title,
-      a: data.a || data.artist,
+    saved.unshift({
+      t, a,
       art: data.art,
       preview: data.preview || data.previewUrl,
-      l: data.l || null
-    };
-    favs.unshift({ ...entry, ts: Date.now() });
-    saveFavs(favs);
+      l: data.l || null,
+      ts: Date.now()
+    });
   }
-  renderFavs();
   
-  const safeKey = key.replace(/"/g, '&quot;');
-  document.querySelectorAll(`.fav-btn[data-key="${safeKey}"]`).forEach(btn => {
-    const active = getFavs().some(f => `${f.t}|${f.a}` === key);
-    btn.classList.toggle('active', active);
-  });
+  updateSavedStorage(saved);
+  renderSaved();
+  
+  // Update UI stars
+  const active = getSaved().some(f => `${f.t || f.title}|${f.a || f.artist}` === key);
+  document.querySelectorAll(`.save-btn[data-key="${key.replace(/"/g, '&quot;')}"]`)
+    .forEach(btn => btn.classList.toggle('active', active));
 }
 
-function renderFavs() {
-  const favs = getFavs();
-  if (!favs.length || resultsGridEl.style.display === 'flex' || cardEl.style.display === 'block') {
-    favsSectionEl.style.display = 'none';
+function renderSaved() {
+  const saved = getSaved();
+  if (!saved.length || resultsGridEl.style.display === 'flex' || cardEl.style.display === 'block') {
+    stashSectionEl.style.display = 'none';
     return;
   }
 
-  favsSectionEl.style.display = 'flex';
-  favsGridEl.innerHTML = favs.map((it, i) => `
+  stashSectionEl.style.display = 'flex';
+  const top20 = saved.slice(0, 20);
+  
+  let html = top20.map((it, i) => `
     <div class="result-item" data-i="${i}" data-preview="${it.preview || ''}" tabindex="0">
-      <button class="fav-btn active" data-key="${(it.t + '|' + it.a).replace(/"/g, '&quot;')}" aria-label="Remove from favorites">
-        <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-      </button>
       <div class="card-meta">
         <img class="card-art" src="${it.art || 'assets/logo.webp'}" loading="lazy" alt="${esc(it.t)} artwork">
         <div class="card-info">
-          <div class="card-title">${esc(it.t)}</div>
+          <div class="card-title-wrap">
+            <div class="card-title">${esc(it.t)}</div>
+          </div>
           <div class="card-artist">${esc(it.a)}</div>
           <div class="player-wrap" ${it.preview ? '' : 'style="display:none"'}>
              <button class="play-btn" aria-label="Play preview">
@@ -528,33 +609,151 @@ function renderFavs() {
     </div>
   `).join('');
 
-  favsGridEl.querySelectorAll('.result-item').forEach((el, i) => {
+  if (saved.length > 20) {
+    html += `
+      <button id="viewAllStash" class="view-all-btn">
+        View All ${saved.length} Tracks
+      </button>
+    `;
+  }
+
+  stashGridEl.innerHTML = html;
+
+  // Mask handled by CSS for scroll indication
+  stashGridEl.classList.toggle('has-mask', saved.length > 5);
+
+  stashGridEl.querySelectorAll('.result-item').forEach((el, i) => {
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.player-wrap') || e.target.closest('.fav-btn')) return;
-      const it = favs[i];
-      // If links are missing, it's a "direct like" from search. Resolve it.
+      if (e.target.closest('.player-wrap')) return;
+      const it = top20[i];
       if (!it.l || Object.keys(it.l).length === 0) {
         resolve({ title: it.t, artist: it.a, art: it.art, previewUrl: it.preview });
       } else {
-        // We have links! Just load the card.
         resolve(it);
       }
     });
-    el.querySelector('.fav-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleFav(favs[i]);
-    });
   });
 
-  favsGridEl.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
-  favsGridEl.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
+  document.getElementById('viewAllStash')?.addEventListener('click', openFavsModal);
+
+  stashGridEl.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
+  stashGridEl.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
+  stashGridEl.querySelectorAll('.card-title').forEach(setupMarquee);
   updatePlayersUI();
+}
+
+let currentSort = 'date';
+const stashModal = document.getElementById('stashModal');
+const stashFullList = document.getElementById('stashFullList');
+
+function openFavsModal() {
+  stashModal.style.display = 'flex';
+  stashIdx = -1;
+  renderStash();
+}
+
+function closeStashModal() {
+  stashModal.style.display = 'none';
+}
+
+document.getElementById('closeStash')?.addEventListener('click', closeStashModal);
+stashModal?.addEventListener('click', e => { if (e.target === stashModal) closeStashModal(); });
+
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentSort = btn.dataset.sort;
+    renderStash();
+  });
+});
+
+function renderStash() {
+  let saved = getSaved();
+  
+  if (currentSort === 'name') saved.sort((a, b) => a.t.localeCompare(b.t));
+  else if (currentSort === 'artist') saved.sort((a, b) => a.a.localeCompare(b.a));
+  else saved.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
+  stashFullList.innerHTML = saved.map((it, i) => `
+    <div class="stash-item-item" data-preview="${it.preview || ''}">
+      <img src="${it.art || 'assets/logo.webp'}" alt="">
+      <div class="stash-item-info">
+        <div class="stash-item-title">${esc(it.t)}</div>
+        <div class="stash-item-artist">${esc(it.a)}</div>
+      </div>
+      <div class="rect-actions player-wrap">
+        <button class="play-btn rect-play-btn" aria-label="Play preview">
+          <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="rect-save-btn active" data-key="${(it.t + '|' + it.a).replace(/"/g, '&quot;')}">
+          <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  stashFullList.querySelectorAll('.stash-item-item').forEach((el, i) => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.rect-actions')) return;
+      closeStashModal();
+      const it = saved[i];
+      if (!it.l || Object.keys(it.l).length === 0) {
+        resolve({ title: it.t, artist: it.a, art: it.art, previewUrl: it.preview });
+      } else {
+        resolve(it);
+      }
+    });
+    el.querySelector('.rect-save-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSaved(saved[i]);
+      renderStash();
+    });
+    el.querySelector('.rect-play-btn').addEventListener('click', (e) => {
+      modalPlaylist = saved;
+      modalIndex = i;
+      handlePlayClick(e);
+    });
+  });
+  updatePlayersUI();
+}
+
+// Bulletproof Marquee Detection using Visibility + Layout
+const marqueeObserver = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      const el = entry.target;
+      const wrap = el.parentElement;
+      if (!wrap || !wrap.classList.contains('card-title-wrap')) return;
+      
+      // Delay slightly to allow transition animations to finish
+      setTimeout(() => {
+        const visibleWidth = wrap.clientWidth;
+        const totalWidth = el.scrollWidth;
+        
+        if (totalWidth > visibleWidth && visibleWidth > 0) {
+          el.classList.add('marquee-on');
+          const dist = -(totalWidth - visibleWidth + 40);
+          el.style.setProperty('--dist', `${dist}px`);
+        } else {
+          el.classList.remove('marquee-on');
+        }
+      }, 300);
+    }
+  });
+}, { threshold: 0.1 });
+
+function setupMarquee(el) {
+  if (!el) return;
+  el.classList.remove('marquee-on'); // Reset
+  marqueeObserver.unobserve(el);
+  marqueeObserver.observe(el);
 }
 
 async function search(q) {
   try {
-    favsSectionEl.style.display = 'none';
-    renderResultsGrid([], true); // Show skeletons
+    stashSectionEl.style.display = 'none';
+    renderResultsGrid([], true); 
     const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=10&country=${COUNTRY}`);
     const d = await r.json();
     if (!d.results?.length) { 
@@ -572,7 +771,7 @@ async function search(q) {
 
 function renderResultsGrid(tracks, isSkeleton = false) {
   cardEl.style.display = 'none';
-  favsSectionEl.style.display = 'none';
+  stashSectionEl.style.display = 'none';
   setWide(false);
   resultsGridEl.style.display = 'flex';
   
@@ -595,7 +794,6 @@ function renderResultsGrid(tracks, isSkeleton = false) {
     return;
   }
 
-  const favs = getFavs();
   const tracksItems = tracks.map(t => ({
     appleUrl: t.trackViewUrl,
     title: t.trackName,
@@ -606,17 +804,14 @@ function renderResultsGrid(tracks, isSkeleton = false) {
   }));
 
   resultsGridEl.innerHTML = tracksItems.map((it, i) => {
-    const key = `${it.title}|${it.artist}`;
-    const isSaved = favs.some(f => `${f.t}|${f.a}` === key);
     return `
     <div class="result-item" data-i="${i}" data-preview="${it.previewUrl || ''}" tabindex="0">
-      <button class="fav-btn ${isSaved ? 'active' : ''}" data-key="${key.replace(/"/g, '&quot;')}" aria-label="Toggle favorite">
-        <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-      </button>
       <div class="card-meta">
         <img class="card-art" src="${it.art}" loading="lazy" alt="${esc(it.title)} album art">
         <div class="card-info">
-          <div class="card-title">${esc(it.title)}</div>
+          <div class="card-title-wrap">
+            <div class="card-title">${esc(it.title)}</div>
+          </div>
           <div class="card-artist">${esc(it.artist)}</div>
           <div class="player-wrap" ${it.previewUrl ? '' : 'style="display:none"'}>
              <button class="play-btn" aria-label="Play preview">
@@ -634,24 +829,19 @@ function renderResultsGrid(tracks, isSkeleton = false) {
 
   resultsGridEl.querySelectorAll('.result-item').forEach((el, i) => {
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.player-wrap') || e.target.closest('.fav-btn')) return;
+      if (e.target.closest('.player-wrap')) return;
       pickResult(tracksItems[i], el);
-    });
-    el.querySelector('.fav-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      const it = tracksItems[i];
-      toggleFav({ t: it.title, a: it.artist, art: it.art, preview: it.previewUrl, l: {} });
     });
   });
 
   resultsGridEl.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
   resultsGridEl.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
+  resultsGridEl.querySelectorAll('.card-title').forEach(setupMarquee);
   updatePlayersUI();
   
-  resultIdx = -1; // Reset result keyboard navigation
+  resultIdx = -1; 
 }
 window.addEventListener('keydown', e => {
-  // Global Space for Play/Pause (only if not typing in search)
   if (e.code === 'Space' && document.activeElement !== qEl) {
     e.preventDefault();
     if (audio.src) {
@@ -660,7 +850,6 @@ window.addEventListener('keydown', e => {
     return;
   }
 
-  // Escape to clear everything
   if (e.key === 'Escape') {
     if (ddEl.style.display === 'block') closeDD();
     else if (resultsGridEl.style.display === 'flex') {
@@ -670,7 +859,6 @@ window.addEventListener('keydown', e => {
     return;
   }
 
-  // Results Grid Navigation
   if (resultsGridEl.style.display === 'flex' && ddEl.style.display !== 'block') {
     const items = resultsGridEl.querySelectorAll('.result-item:not(.skeleton-item)');
     if (!items.length) return;
@@ -698,32 +886,27 @@ function hlResult(items) {
 }
 
 async function pickResult(it, el) {
-  // FLIP Technique
   const first = el.getBoundingClientRect();
   
-  // Prepare the UI
   resultsGridEl.querySelectorAll('.result-item').forEach(item => {
     if (item !== el) item.classList.add('fade-out');
   });
 
   qEl.value = `${it.title} — ${it.artist}`;
   
-  // Transition to Card
   setTimeout(async () => {
     resultsGridEl.style.display = 'none';
     setWide(false);
     
-    // Setup card for measurement
     populateUI(it.title, it.artist, it.art, it.previewUrl, null);
+    currentData = { t: it.title, a: it.artist, art: it.art, preview: it.previewUrl, l: {} };
     cardEl.style.display = 'block';
     
     const targetMeta = cardEl.querySelector('.card-meta');
     const last = targetMeta.getBoundingClientRect();
     
-    // Smooth fade of links
     linksEl.style.opacity = '0';
 
-    // Invert
     const deltaY = first.top - last.top;
     const deltaX = first.left - last.left;
     const deltaW = first.width / last.width;
@@ -733,7 +916,6 @@ async function pickResult(it, el) {
     targetMeta.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(${deltaW}, ${deltaH})`;
     targetMeta.style.transition = 'none';
 
-    // Play
     requestAnimationFrame(() => {
       targetMeta.classList.add('flipping');
       targetMeta.style.transform = '';
@@ -757,7 +939,7 @@ function setWide(on) {
 let lastResolvedKey = null;
 
 async function resolve(data) {
-  favsSectionEl.style.display = 'none';
+  stashSectionEl.style.display = 'none';
   const t = data.t || data.title || '';
   const a = data.a || data.artist || '';
   const currentKey = typeof data === 'string' ? data.trim() : (data ? `${t}|${a}` : '');
@@ -788,7 +970,6 @@ async function resolve(data) {
       return r.ok ? r.json() : null;
     };
 
-    // If item ALREADY HAS links (from a favorite), skip network resolve!
     let res = (item && item.l && Object.keys(item.l).length > 0) ? { title: t, artist: a, art: item.art, preview: item.preview, links: item.l } : null;
     let it = null;
 
@@ -803,7 +984,6 @@ async function resolve(data) {
       it = (itunesData.status === 'fulfilled') ? itunesData.value : null;
     }
 
-    // 4. Final Resort: Local Fallback
     if ((!res || Object.keys(res.links || {}).length === 0) && isUrl) {
       try {
         const targetUrl = u.replace('music.youtube.com', 'youtube.com').replace('youtube.com/shorts/', 'youtube.com/watch?v=');
@@ -821,7 +1001,7 @@ async function resolve(data) {
 
             populateUI(finalT, finalA, finalArt, item.preview || item.previewUrl, localLinks);
             currentData = { t: finalT, a: finalA, itunesId: null, l: localLinks };
-            syncFavLinks(currentData);
+            syncSavedLinks(currentData);
             return;
           }
         }
@@ -831,7 +1011,6 @@ async function resolve(data) {
     if (!res) { showErr('Failed to resolve song links.'); return; }
     if (!item) item = { title: '', artist: '', art: '', previewUrl: null };
 
-    // Update item with iTunes results if available
     if (it?.results?.[0]) {
       const r = it.results[0];
       if (!(item.preview || item.previewUrl)) item.preview = r.previewUrl;
@@ -839,7 +1018,6 @@ async function resolve(data) {
       if (!res.links.appleMusic) res.links.appleMusic = r.trackViewUrl;
     }
 
-    // Merge everything
     const finalT = res.title || t;
     const finalA = res.artist || a;
     const finalArt = res.art || item.art;
@@ -849,7 +1027,7 @@ async function resolve(data) {
     populateUI(finalT, finalA, finalArt, finalPreview, res.links);
     currentData = { t: finalT, a: finalA, itunesId, l: res.links };
     
-    syncFavLinks(currentData);
+    syncSavedLinks(currentData);
 
   } catch (e) {
     console.error('Resolve failed:', e);
@@ -859,13 +1037,13 @@ async function resolve(data) {
   }
 }
 
-function syncFavLinks(data) {
-  const favs = getFavs();
+function syncSavedLinks(data) {
+  const saved = getSaved();
   const key = `${data.t}|${data.a}`;
-  const idx = favs.findIndex(f => `${f.t || f.title}|${f.a || f.artist}` === key);
-  if (idx > -1 && (!favs[idx].l || Object.keys(favs[idx].l).length === 0)) {
-    favs[idx].l = data.l;
-    saveFavs(favs);
+  const idx = saved.findIndex(f => `${f.t || f.title}|${f.a || f.artist}` === key);
+  if (idx > -1 && (!saved[idx].l || Object.keys(saved[idx].l).length === 0)) {
+    saved[idx].l = data.l;
+    updateSavedStorage(saved);
   }
 }
 
@@ -875,15 +1053,24 @@ function populateUI(title, artist, art, preview, links) {
   const cartistEl = document.getElementById('cartist');
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
-  const favBtn = document.getElementById('favStar');
+  const favBtn = document.getElementById('saveStar');
   const key = `${title}|${artist}`;
   favBtn.setAttribute('data-key', key);
-  favBtn.onclick = () => { if (currentData) toggleFav(currentData); };
-  favBtn.classList.toggle('active', getFavs().some(f => `${f.t}|${f.a}` === key));
+  favBtn.onclick = () => {
+    // If resolution isn't done, save with what we have (title, artist, etc.)
+    const data = currentData || { t: title, a: artist, art, preview, l: links || {} };
+    toggleSaved(data);
+  };
+  favBtn.classList.toggle('active', getSaved().some(f => `${f.t}|${f.a}` === key));
   favBtn.style.display = title ? 'flex' : 'none';
 
   if (!art && !title) { artEl.src = BLANK; artEl.classList.add('skeleton'); }
-  else { artEl.classList.remove('skeleton'); artEl.src = art || 'assets/logo.webp'; }
+  else { 
+    artEl.classList.remove('skeleton'); 
+    artEl.src = art?.replace('200x200bb', '600x600bb') || 'assets/logo.webp';
+    artEl.style.cursor = 'zoom-in';
+    artEl.onclick = () => openImgModal(art?.replace('200x200bb', '1000x1000bb').replace('600x600bb', '1000x1000bb'));
+  }
   artEl.alt = title ? `${title} — ${artist} album artwork` : '';
 
   if (!title) {
@@ -895,10 +1082,11 @@ function populateUI(title, artist, art, preview, links) {
     cartistEl.classList.remove('skeleton'); cartistEl.textContent = artist;
     cartistEl.classList.toggle('lp-easter', artist.trim().toLowerCase().includes('linkin park'));
     
-    // Marquee logic
-    if (ctitleEl.scrollWidth > ctitleEl.offsetWidth) ctitleEl.classList.add('marquee-on');
-    else ctitleEl.classList.remove('marquee-on');
+    setupMarquee(ctitleEl);
   }
+
+  // Visual shortcut hints
+  updateShortcutHints();
 
   const pWrap = document.getElementById('playerWrap');
   if (preview) {
@@ -1017,7 +1205,7 @@ function makeRow(p, href) {
 function setLoad(on) {
   if (on && cardEl.style.display !== 'block' && resultsGridEl.style.display !== 'flex') {
     loaderEl.style.display = 'block';
-    favsSectionEl.style.display = 'none';
+    stashSectionEl.style.display = 'none';
   }
   else loaderEl.style.display = 'none';
   if (on) errEl.style.display = 'none';
@@ -1042,4 +1230,79 @@ setInterval(() => {
 if (PROXY_URL) {
   fetchAndSolveChallenge();
   fetchAndSolveChallenge();
+}
+
+function openImgModal(src) {
+  const modal = document.getElementById('imgModal');
+  const img = document.getElementById('fullArt');
+  img.src = src;
+  modal.style.display = 'flex';
+}
+
+document.getElementById('closeImg')?.addEventListener('click', () => {
+  document.getElementById('imgModal').style.display = 'none';
+});
+
+document.addEventListener('keydown', (e) => {
+  // Don't trigger shortcuts if user is typing in search
+  if (e.target.tagName === 'INPUT' && e.key !== 'Escape') return;
+
+  if (stashModal.style.display === 'flex') {
+    const items = stashFullList.querySelectorAll('.stash-item-item');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      stashIdx = Math.min(stashIdx + 1, items.length - 1);
+      updateStashSelection();
+      return;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      stashIdx = Math.max(stashIdx - 1, 0);
+      updateStashSelection();
+      return;
+    } else if (e.key === 'Enter' && stashIdx !== -1) {
+      e.preventDefault();
+      items[stashIdx].click();
+      return;
+    }
+  }
+
+  switch (e.key.toLowerCase()) {
+    case 's': // Star/Unstar
+      e.preventDefault();
+      document.getElementById('saveStar')?.click();
+      break;
+    case 'l': // Library/Stash
+      e.preventDefault();
+      if (stashModal.style.display === 'flex') closeStashModal();
+      else openFavsModal();
+      break;
+    case ' ': // Play/Pause
+      e.preventDefault();
+      if (isPlaying) audio.pause(); else audio.play();
+      break;
+    case '/': // Focus Search
+      e.preventDefault();
+      document.getElementById('q').focus();
+      break;
+    case 'escape': // Close everything
+      if (stashModal.style.display === 'flex') {
+        closeStashModal();
+      } else if (cardEl.style.display === 'block') {
+        cardEl.style.display = 'none';
+        renderSaved();
+      } else if (ddEl.style.display === 'block') {
+        ddEl.style.display = 'none';
+      }
+      break;
+  }
+});
+
+function updateShortcutHints() {
+  // Optional: could add visual [S] [L] hints to buttons
+}
+
+function updateStashSelection() {
+  const items = stashFullList.querySelectorAll('.stash-item-item');
+  items.forEach((item, i) => item.classList.toggle('active', i === stashIdx));
+  if (stashIdx !== -1) items[stashIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }

@@ -53,3 +53,8 @@ export const P = [
  * Rotates the search placeholder text.
  */
 export const PLACEHOLDERS = ['Type a few lyrics…', 'Search a song…', 'Drop a link…'];
+
+/**
+ * Storage keys.
+ */
+export const SAVED_KEY = 'linkpark_saved';

@@ -12,20 +12,21 @@
   <!-- Open Graph / Social Previews -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://darshanx256.github.io/LinkPark/">
-  <meta property="og:title" content="LinkPark — Music Link Resolver">
+  <meta property="og:title" content="LinkPark — Your Universal Music Link Resolver">
   <meta property="og:description" content="Paste any streaming link or search a song. Get clean links for every platform instantly.">
   <meta property="og:image" content="https://darshanx256.github.io/LinkPark/assets/logo.webp">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="LinkPark — Music Link Resolver">
+  <meta name="twitter:title" content="LinkPark — Your Universal Music Link Resolver">
   <meta name="twitter:description" content="Paste any streaming link or search a song. Get clean links for every platform instantly.">
   <meta name="twitter:image" content="https://darshanx256.github.io/LinkPark/assets/logo.webp">
 
   <link rel="canonical" href="https://darshanx256.github.io/LinkPark/">
   <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
-  <title>LinkPark — Music Link Resolver</title>
+  <title>LinkPark — Your Universal Music Link Resolver</title>
   <link rel="preconnect" href="https://api.song.link">
   <link rel="preconnect" href="https://api.search.tinyfish.ai">
   <link rel="preconnect" href="https://itunes.apple.com">
+  <link rel="dns-prefetch" href="https://itunes.apple.com">
   <link rel="stylesheet" href="style.css">
   <script src="config.js" onerror="console.log('No local config.js found')"></script>
 </head>
@@ -51,16 +52,16 @@
       <div class="error" id="err" role="alert"></div>
       <div id="resultsGrid" class="results-grid" style="display:none"></div>
       
-      <div id="favsSection" class="favs-section">
-        <h2 class="favs-title">Saved</h2>
-        <div id="favsGrid" class="results-grid"></div>
+      <div id="stashSection" class="stash-section">
+        <h2 class="stash-title">Saved Songs</h2>
+        <div id="stashGrid" class="results-grid"></div>
       </div>
 
       <div class="card" id="card" aria-live="polite">
-        <button id="favStar" class="fav-btn" aria-label="Toggle favorite">
-          <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-        </button>
         <div class="card-meta">
+          <button id="saveStar" class="save-btn" aria-label="Toggle favorite">
+            <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          </button>
           <img class="card-art" id="art" src="" alt="">
           <div class="card-info">
             <div class="card-title-wrap">
@@ -91,8 +92,29 @@
         </div>
       </div>
     </main>
-
   </div>
+  <div id="stashModal" class="modal" style="display:none">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Saved Stash</h2>
+        <button id="closeStash" class="close-btn" aria-label="Close stash">&times;</button>
+      </div>
+      <div class="modal-sort">
+        <button class="sort-btn active" data-sort="date">Recently Added</button>
+        <button class="sort-btn" data-sort="name">Name</button>
+        <button class="sort-btn" data-sort="artist">Artist</button>
+      </div>
+      <div id="stashFullList" class="stash-full-list"></div>
+    </div>
+  </div>
+
+  <div id="imgModal" class="modal" style="display:none; z-index: 20000; padding: 0;">
+    <div class="img-modal-content" style="width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; position: relative;">
+      <img id="fullArt" src="" style="width: 100%; height: 100%; object-fit: contain; background: black;">
+      <button id="closeImg" class="close-btn" style="position: absolute; top: 30px; right: 30px; background: rgba(0,0,0,0.5); z-index: 20001;">&times;</button>
+    </div>
+  </div>
+
   <script type="module" src="js/script.js"></script>
 </body>
 
