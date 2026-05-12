@@ -464,19 +464,35 @@ function toggleFav(data) {
   if (!data.t || !data.a) return;
   const favs = getFavs();
   const key = `${data.t}|${data.a}`;
-  const idx = favs.findIndex(f => `${f.t}|${f.a}` === key);
+  const idx = favs.findIndex(f => `${f.t || f.title}|${f.a || f.artist}` === key);
   
   if (idx > -1) {
-    favs.splice(idx, 1);
+    // If we're toggling an existing favorite and it doesn't have links, but 'data' DOES, update it.
+    if (!favs[idx].l && data.l && Object.keys(data.l).length > 0) {
+      favs[idx].l = data.l;
+      saveFavs(favs);
+    } else {
+      favs.splice(idx, 1);
+      saveFavs(favs);
+    }
   } else {
-    favs.unshift({ ...data, ts: Date.now() });
+    // New favorite. Ensure we store it in the internal compact format (t, a, art, preview, l)
+    const entry = {
+      t: data.t || data.title,
+      a: data.a || data.artist,
+      art: data.art,
+      preview: data.preview || data.previewUrl,
+      l: data.l || null
+    };
+    favs.unshift({ ...entry, ts: Date.now() });
+    saveFavs(favs);
   }
-  saveFavs(favs);
   renderFavs();
   
-  // Update all stars in UI
-  document.querySelectorAll(`.fav-btn[data-key="${key.replace(/"/g, '&quot;')}"]`).forEach(btn => {
-    btn.classList.toggle('active', idx === -1);
+  const safeKey = key.replace(/"/g, '&quot;');
+  document.querySelectorAll(`.fav-btn[data-key="${safeKey}"]`).forEach(btn => {
+    const active = getFavs().some(f => `${f.t}|${f.a}` === key);
+    btn.classList.toggle('active', active);
   });
 }
 
@@ -515,7 +531,14 @@ function renderFavs() {
   favsGridEl.querySelectorAll('.result-item').forEach((el, i) => {
     el.addEventListener('click', (e) => {
       if (e.target.closest('.player-wrap') || e.target.closest('.fav-btn')) return;
-      resolve(favs[i]);
+      const it = favs[i];
+      // If links are missing, it's a "direct like" from search. Resolve it.
+      if (!it.l || Object.keys(it.l).length === 0) {
+        resolve({ title: it.t, artist: it.a, art: it.art, previewUrl: it.preview });
+      } else {
+        // We have links! Just load the card.
+        resolve(it);
+      }
     });
     el.querySelector('.fav-btn').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -735,7 +758,9 @@ let lastResolvedKey = null;
 
 async function resolve(data) {
   favsSectionEl.style.display = 'none';
-  const currentKey = typeof data === 'string' ? data.trim() : (data ? `${data.t || data.title}|${data.a || data.artist}` : '');
+  const t = data.t || data.title || '';
+  const a = data.a || data.artist || '';
+  const currentKey = typeof data === 'string' ? data.trim() : (data ? `${t}|${a}` : '');
   if (currentKey && currentKey === lastResolvedKey) return;
   lastResolvedKey = currentKey;
   
@@ -743,19 +768,19 @@ async function resolve(data) {
   let item = typeof data === 'object' ? data : null;
   const isUrl = typeof data === 'string';
 
-  if (item) populateUI(item.title, item.artist, item.art || item.thumb.replace('100x100bb', '600x600bb'), item.previewUrl, null);
+  if (item) populateUI(t, a, item.art || item.thumb?.replace('100x100bb', '600x600bb'), item.preview || item.previewUrl, null);
   else populateUI('', '', '', null, null);
   cardEl.style.display = 'block';
   setLoad(true);
 
   try {
-    const q = item ? `${item.title} ${item.artist}` : '';
+    const q = item ? `${t} ${a}` : '';
     const u = isUrl ? data : (item?.appleUrl || '');
     
     const fetchResolve = async (retry = true) => {
       if (!PROXY_URL) return null;
       const h = await getPoWHeaders();
-      const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(q)}&u=${enc(u)}&artist=${enc(item?.artist || '')}&album=${enc(item?.album || '')}&country=${COUNTRY}`, { headers: h });
+      const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(q)}&u=${enc(u)}&artist=${enc(a)}&album=${enc(item?.album || '')}&country=${COUNTRY}`, { headers: h });
       if (r.status === 401 && retry) {
         challengeQueue.length = 0;
         return fetchResolve(false);
@@ -763,19 +788,22 @@ async function resolve(data) {
       return r.ok ? r.json() : null;
     };
 
-    // Parallel attempt 1: Get server resolution and initial iTunes lookup
-    // If it's a 'Search Pick', the client already has metadata/preview.
-    // If it's a 'URL Drop', the server will handle the iTunes lookup for us.
-    const [resolved, itunesData] = await Promise.allSettled([
-      fetchResolve(),
-      (item && !item.previewUrl) ? fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
-    ]);
+    // If item ALREADY HAS links (from a favorite), skip network resolve!
+    let res = (item && item.l && Object.keys(item.l).length > 0) ? { title: t, artist: a, art: item.art, preview: item.preview, links: item.l } : null;
+    let it = null;
 
-    if (myId !== lastResolveId) return;
-    const res = (resolved.status === 'fulfilled') ? resolved.value : null;
-    const it = (itunesData.status === 'fulfilled') ? itunesData.value : null;
+    if (!res) {
+      const [resolved, itunesData] = await Promise.allSettled([
+        fetchResolve(),
+        (item && !(item.preview || item.previewUrl)) ? fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
+      ]);
 
-    // 4. Final Resort: Local Fallback (Fetch at local on user's device)
+      if (myId !== lastResolveId) return;
+      res = (resolved.status === 'fulfilled') ? resolved.value : null;
+      it = (itunesData.status === 'fulfilled') ? itunesData.value : null;
+    }
+
+    // 4. Final Resort: Local Fallback
     if ((!res || Object.keys(res.links || {}).length === 0) && isUrl) {
       try {
         const targetUrl = u.replace('music.youtube.com', 'youtube.com').replace('youtube.com/shorts/', 'youtube.com/watch?v=');
@@ -787,12 +815,13 @@ async function resolve(data) {
             Object.keys(localData.linksByPlatform).forEach(k => localLinks[k] = localData.linksByPlatform[k].url);
             
             const ent = localData.entitiesByUniqueId?.[localData.entityUniqueId] || {};
-            const finalT = ent.title || item.title;
-            const finalA = ent.artistName || item.artist;
+            const finalT = ent.title || t;
+            const finalA = ent.artistName || a;
             const finalArt = ent.thumbnailUrl || item.art;
 
-            populateUI(finalT, finalA, finalArt, item.previewUrl, localLinks);
+            populateUI(finalT, finalA, finalArt, item.preview || item.previewUrl, localLinks);
             currentData = { t: finalT, a: finalA, itunesId: null, l: localLinks };
+            syncFavLinks(currentData);
             return;
           }
         }
@@ -802,23 +831,25 @@ async function resolve(data) {
     if (!res) { showErr('Failed to resolve song links.'); return; }
     if (!item) item = { title: '', artist: '', art: '', previewUrl: null };
 
-    // Update item with iTunes results if available (primarily for Search Picks)
+    // Update item with iTunes results if available
     if (it?.results?.[0]) {
       const r = it.results[0];
-      if (!item.previewUrl) item.previewUrl = r.previewUrl;
+      if (!(item.preview || item.previewUrl)) item.preview = r.previewUrl;
       if (!item.art) item.art = r.artworkUrl100.replace('100x100bb', '600x600bb');
       if (!res.links.appleMusic) res.links.appleMusic = r.trackViewUrl;
     }
 
-    // Merge everything (preferring server-side cooked data)
-    const finalT = res.title || item.title;
-    const finalA = res.artist || item.artist;
+    // Merge everything
+    const finalT = res.title || t;
+    const finalA = res.artist || a;
     const finalArt = res.art || item.art;
-    const finalPreview = res.preview || item.previewUrl;
+    const finalPreview = res.preview || item.preview || item.previewUrl;
 
     const itunesId = res.links.appleMusic?.match(/[?&]i=(\d+)/)?.[1] || null;
     populateUI(finalT, finalA, finalArt, finalPreview, res.links);
     currentData = { t: finalT, a: finalA, itunesId, l: res.links };
+    
+    syncFavLinks(currentData);
 
   } catch (e) {
     console.error('Resolve failed:', e);
@@ -828,26 +859,26 @@ async function resolve(data) {
   }
 }
 
+function syncFavLinks(data) {
+  const favs = getFavs();
+  const key = `${data.t}|${data.a}`;
+  const idx = favs.findIndex(f => `${f.t || f.title}|${f.a || f.artist}` === key);
+  if (idx > -1 && (!favs[idx].l || Object.keys(favs[idx].l).length === 0)) {
+    favs[idx].l = data.l;
+    saveFavs(favs);
+  }
+}
+
 function populateUI(title, artist, art, preview, links) {
   const artEl = document.getElementById('art');
   const ctitleEl = document.getElementById('ctitle');
   const cartistEl = document.getElementById('cartist');
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
-  // Favourites Star
-  let favBtn = document.getElementById('favStar');
-  if (!favBtn) {
-    favBtn = document.createElement('button');
-    favBtn.id = 'favStar';
-    favBtn.className = 'fav-btn';
-    favBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`;
-    document.querySelector('.card .card-meta').appendChild(favBtn);
-    favBtn.addEventListener('click', () => {
-      if (currentData) toggleFav(currentData);
-    });
-  }
+  const favBtn = document.getElementById('favStar');
   const key = `${title}|${artist}`;
   favBtn.setAttribute('data-key', key);
+  favBtn.onclick = () => { if (currentData) toggleFav(currentData); };
   favBtn.classList.toggle('active', getFavs().some(f => `${f.t}|${f.a}` === key));
   favBtn.style.display = title ? 'flex' : 'none';
 
@@ -858,10 +889,15 @@ function populateUI(title, artist, art, preview, links) {
   if (!title) {
     ctitleEl.textContent = ''; ctitleEl.classList.add('skeleton');
     cartistEl.textContent = ''; cartistEl.classList.add('skeleton');
+    ctitleEl.classList.remove('marquee-on');
   } else {
     ctitleEl.classList.remove('skeleton'); ctitleEl.textContent = title;
     cartistEl.classList.remove('skeleton'); cartistEl.textContent = artist;
     cartistEl.classList.toggle('lp-easter', artist.trim().toLowerCase().includes('linkin park'));
+    
+    // Marquee logic
+    if (ctitleEl.scrollWidth > ctitleEl.offsetWidth) ctitleEl.classList.add('marquee-on');
+    else ctitleEl.classList.remove('marquee-on');
   }
 
   const pWrap = document.getElementById('playerWrap');

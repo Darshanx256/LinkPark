@@ -316,32 +316,18 @@ header p {
 .favs-section {
   display: none;
   flex-direction: column;
-  margin-top: 1.5rem;
+  margin-top: 2.2rem;
 }
 
-.favs-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 0 4px;
-}
-
-.favs-header .tag {
-  font-size: 0.65rem;
+.favs-title {
+  text-align: center;
+  font-size: 0.75rem;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  background: var(--fav);
-  color: #000;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.favs-header h2 {
-  font-size: 0.9rem;
-  font-weight: 600;
+  letter-spacing: 0.15em;
   color: var(--muted);
+  margin-bottom: 1.2rem;
+  position: relative;
 }
 
 /* ─── Results Grid ─── */
@@ -498,13 +484,30 @@ header p {
   box-shadow: 0 4px 14px #00000050;
 }
 
+.card-title-wrap {
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
 .card-title {
   font-size: 1rem;
   font-weight: 700;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   letter-spacing: -0.01em;
+}
+
+.card-title.marquee-on {
+  width: max-content;
+  animation: marquee 8s linear infinite;
+  padding-right: 2rem;
+}
+
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  10% { transform: translateX(0); }
+  90% { transform: translateX(calc(-100% + 240px)); }
+  100% { transform: translateX(calc(-100% + 240px)); }
 }
 
 .card-artist {
@@ -541,10 +544,10 @@ header p {
 
 .fav-btn {
   position: absolute;
-  top: 1.25rem;
-  right: 1.25rem;
-  width: 32px;
-  height: 32px;
+  top: 1.15rem;
+  right: 1.15rem;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;

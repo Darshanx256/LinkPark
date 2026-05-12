@@ -52,18 +52,20 @@
       <div id="resultsGrid" class="results-grid" style="display:none"></div>
       
       <div id="favsSection" class="favs-section">
-        <div class="favs-header">
-          <span class="tag">Saved</span>
-          <h2>Your Collection</h2>
-        </div>
+        <h2 class="favs-title">Saved</h2>
         <div id="favsGrid" class="results-grid"></div>
       </div>
 
       <div class="card" id="card" aria-live="polite">
+        <button id="favStar" class="fav-btn" aria-label="Toggle favorite">
+          <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        </button>
         <div class="card-meta">
           <img class="card-art" id="art" src="" alt="">
           <div class="card-info">
-            <div class="card-title" id="ctitle"></div>
+            <div class="card-title-wrap">
+              <div class="card-title" id="ctitle"></div>
+            </div>
             <div class="card-artist" id="cartist"></div>
             <div class="player-wrap" id="playerWrap" style="display:none">
               <button class="play-btn" id="playBtn" aria-label="Play preview">
