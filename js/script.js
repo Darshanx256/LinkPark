@@ -11,6 +11,8 @@ let lastResolveId = 0;
 let currentData = null; // Stores currently resolved track for sharing
 
 const challengeQueue = []; // Array of { promise, ts }
+let isSearching = false;
+let resultIdx = -1; // Global keyboard navigation index for results grid
 
 async function solvePoW(seed, difficulty) {
   const target = '0'.repeat(difficulty);
@@ -128,6 +130,20 @@ async function decodeShare(s) {
   } catch (e) { return null; }
 }
 
+/**
+ * Normalizes a URL by removing query parameters and ensuring consistent origin.
+ * @param {string} u - The URL to normalize.
+ * @returns {string} The normalized URL string.
+ */
+function normalizeUrl(u) {
+  if (!u) return '';
+  try {
+    return new URL(u, window.location.origin).href.split('?')[0];
+  } catch (e) {
+    return u;
+  }
+}
+
 const qEl = document.getElementById('q');
 const ddEl = document.getElementById('dd');
 const hintEl = document.getElementById('hint');
@@ -136,18 +152,26 @@ const errEl = document.getElementById('err');
 const cardEl = document.getElementById('card');
 const linksEl = document.getElementById('links');
 const logoEl = document.querySelector('.logo');
+const resultsGridEl = document.getElementById('resultsGrid');
+const wrapEl = document.querySelector('.wrap');
 
 if (logoEl) {
   logoEl.addEventListener('click', () => {
     qEl.value = '';
     closeDD();
     cardEl.style.display = 'none';
+    resultsGridEl.style.display = 'none';
+    setWide(false);
     errEl.style.display = 'none';
     currentData = null;
+    isSearching = false;
+    resultIdx = -1;
     const url = new URL(window.location.href);
     url.searchParams.delete('s');
     window.history.replaceState({}, '', url);
     audio.pause();
+    audio.src = '';
+    updatePlayersUI();
   });
 }
 
@@ -155,30 +179,92 @@ let timer = null, idx = -1, items = [];
 const audio = new Audio();
 let isPlaying = false;
 
-audio.addEventListener('play', () => { isPlaying = true; updatePlayBtn(); });
-audio.addEventListener('pause', () => { isPlaying = false; updatePlayBtn(); });
-audio.addEventListener('ended', () => { isPlaying = false; updatePlayBtn(); });
+audio.addEventListener('play', () => { isPlaying = true; updatePlayersUI(); });
+audio.addEventListener('pause', () => { isPlaying = false; updatePlayersUI(); });
+audio.addEventListener('ended', () => { isPlaying = false; updatePlayersUI(); });
+
 let lastTimeUpdate = 0;
 audio.addEventListener('timeupdate', () => {
   const now = Date.now();
-  if (now - lastTimeUpdate < 500) return;
+  if (now - lastTimeUpdate < 100) return;
   lastTimeUpdate = now;
-  if (!audio.duration) return;
-  const p = (audio.currentTime / audio.duration) * 100;
-  document.getElementById('seekFill').style.width = `${p}%`;
-  document.getElementById('timeLabel').textContent = formatTime(audio.currentTime);
+  updatePlayersUI();
 });
 
-document.getElementById('playBtn').addEventListener('click', () => {
-  if (isPlaying) audio.pause(); else audio.play();
-});
+function updatePlayersUI() {
+  const p = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+  const time = formatTime(audio.currentTime);
+  const currentSrc = normalizeUrl(audio.src);
 
-document.getElementById('seekWrap').addEventListener('click', (e) => {
+  document.querySelectorAll('.player-wrap').forEach(wrap => {
+    const item = wrap.closest('[data-preview]') || wrap.closest('.card');
+    const itemSrc = normalizeUrl(item?.dataset?.preview || (item?.id === 'card' ? audio.src : ''));
+    
+    // Only update if this player corresponds to the current audio source
+    if (itemSrc && itemSrc === currentSrc) {
+      const playBtn = wrap.querySelector('.play-btn');
+      const seekFill = wrap.querySelector('.seek-fill');
+      const timeLabel = wrap.querySelector('.time-label');
+
+      if (playBtn) {
+        if (isPlaying) {
+          playBtn.classList.add('playing');
+          playBtn.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+        } else {
+          playBtn.classList.remove('playing');
+          playBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
+        }
+      }
+      if (seekFill) seekFill.style.width = `${p}%`;
+      if (timeLabel) timeLabel.textContent = time;
+    } else {
+      // Reset other players
+      const playBtn = wrap.querySelector('.play-btn');
+      if (playBtn) {
+        playBtn.classList.remove('playing');
+        playBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
+      }
+      const seekFill = wrap.querySelector('.seek-fill');
+      if (seekFill) seekFill.style.width = '0%';
+      const timeLabel = wrap.querySelector('.time-label');
+      if (timeLabel) timeLabel.textContent = '0:00';
+    }
+  });
+}
+
+function handlePlayClick(e) {
+  e.stopPropagation();
+  const btn = e.currentTarget;
+  const wrap = btn.closest('.player-wrap');
+  const item = wrap.closest('[data-preview]') || wrap.closest('.card');
+  const src = item?.dataset?.preview || (item?.id === 'card' ? audio.src : '');
+
+  if (!src) return;
+
+  if (normalizeUrl(audio.src) === normalizeUrl(src)) {
+    if (isPlaying) audio.pause(); else audio.play();
+  } else {
+    audio.src = src;
+    audio.play();
+  }
+}
+
+function handleSeekClick(e) {
+  e.stopPropagation();
   if (!audio.duration) return;
   const rect = e.currentTarget.getBoundingClientRect();
+  const wrap = e.currentTarget.closest('.player-wrap');
+  const item = wrap.closest('[data-preview]') || wrap.closest('.card');
+  const src = item?.dataset?.preview || (item?.id === 'card' ? audio.src : '');
+
+  if (normalizeUrl(audio.src) !== normalizeUrl(src)) return;
+
   const p = (e.clientX - rect.left) / rect.width;
   audio.currentTime = p * audio.duration;
-});
+}
+
+document.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
+document.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
 
 document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => {
   if (!currentData) return;
@@ -254,18 +340,6 @@ function formatTime(s) {
   return `${min}:${sec.toString().padStart(2, '0')}`;
 }
 
-function updatePlayBtn() {
-  const btn = document.getElementById('playBtn');
-  if (!btn) return;
-  if (isPlaying) {
-    btn.classList.add('playing');
-    btn.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
-  } else {
-    btn.classList.remove('playing');
-    btn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
-  }
-}
-
 qEl.addEventListener('input', () => {
   clearTimeout(timer);
   const v = qEl.value.trim();
@@ -278,20 +352,28 @@ qEl.addEventListener('input', () => {
       window.history.replaceState({}, '', url);
     }
   }
-  if (v.length < 2) return;
+  if (v.length < 2) {
+    resultsGridEl.style.display = 'none';
+    setWide(false);
+    resultIdx = -1;
+    return;
+  }
   if (!/\s/.test(v) && /^(https?:\/\/|spotify:track:)/i.test(v)) {
     let url = v;
     if (!/^https?:\/\//i.test(url) && !url.startsWith('spotify:')) url = 'https://' + url;
     timer = setTimeout(() => resolve(url), 220);
     return;
   }
+  isSearching = false;
   timer = setTimeout(() => suggest(v), 220);
 });
 
 async function suggest(q) {
+  if (isSearching) return;
   try {
     const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=6&country=${COUNTRY}&v=${Date.now()}`);
     const d = await r.json();
+    if (isSearching) return;
     renderDD(d.results || []);
   } catch (_) { }
 }
@@ -325,6 +407,12 @@ function renderDD(tracks) {
 }
 
 qEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    isSearching = true;
+    clearTimeout(timer);
+    closeDD();
+    // Form submit handles the rest
+  }
   if (ddEl.style.display !== 'block') return;
   if (e.key === 'ArrowDown') { e.preventDefault(); idx = (idx + 1) % items.length; hl(); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); idx = (idx - 1 + items.length) % items.length; hl(); }
@@ -345,12 +433,205 @@ function pick(i) {
 
 document.getElementById('searchForm')?.addEventListener('submit', e => {
   e.preventDefault();
+  isSearching = true;
+  clearTimeout(timer);
+  closeDD();
   const v = qEl.value.trim();
   if (!v) return;
   if (ddEl.style.display === 'block' && idx >= 0) { pick(idx); return; }
   const isUrl = /^(https?:\/\/|spotify:track:)/i.test(v) || (!/\s/.test(v) && v.includes('.'));
-  if (isUrl) { clearTimeout(timer); closeDD(); resolve(v); }
+  if (isUrl) { resolve(v); }
+  else { search(v); }
 });
+
+async function search(q) {
+  try {
+    renderResultsGrid([], true); // Show skeletons
+    const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=10&country=${COUNTRY}`);
+    const d = await r.json();
+    if (!d.results?.length) { 
+      resultsGridEl.style.display = 'none';
+      showErr('No results found.'); 
+      return; 
+    }
+    renderResultsGrid(d.results);
+  } catch (e) {
+    showErr('Failed to fetch search results.');
+  } finally {
+    setLoad(false);
+  }
+}
+
+function renderResultsGrid(tracks, isSkeleton = false) {
+  cardEl.style.display = 'none';
+  setWide(false);
+  resultsGridEl.style.display = 'flex';
+  
+  if (isSkeleton) {
+    resultsGridEl.innerHTML = Array(4).fill(0).map(() => `
+      <div class="result-item skeleton-item">
+        <div class="card-meta">
+          <div class="card-art skeleton"></div>
+          <div class="card-info">
+            <div class="card-title skeleton" style="width: 60%"></div>
+            <div class="card-artist skeleton" style="width: 40%"></div>
+            <div class="player-wrap">
+              <div class="play-btn skeleton" style="border-radius: 50%"></div>
+              <div class="seek-wrap"><div class="seek-bar skeleton"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+    return;
+  }
+
+  const tracksItems = tracks.map(t => ({
+    appleUrl: t.trackViewUrl,
+    title: t.trackName,
+    artist: t.artistName,
+    art: (t.artworkUrl100 || t.artworkUrl60).replace('100x100bb', '600x600bb'),
+    previewUrl: t.previewUrl,
+    album: t.collectionName || '',
+  }));
+
+  resultsGridEl.innerHTML = tracksItems.map((it, i) => `
+    <div class="result-item" data-i="${i}" data-preview="${it.previewUrl || ''}" tabindex="0">
+      <div class="card-meta">
+        <img class="card-art" src="${it.art}" loading="lazy" alt="${esc(it.title)} album art">
+        <div class="card-info">
+          <div class="card-title">${esc(it.title)}</div>
+          <div class="card-artist">${esc(it.artist)}</div>
+          <div class="player-wrap" ${it.previewUrl ? '' : 'style="display:none"'}>
+             <button class="play-btn" aria-label="Play preview">
+               <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+             </button>
+             <div class="seek-wrap" role="slider">
+               <div class="seek-bar"><div class="seek-fill"></div></div>
+             </div>
+             <div class="time-label">0:00</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  resultsGridEl.querySelectorAll('.result-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.player-wrap')) return;
+      pickResult(tracksItems[el.dataset.i], el);
+    });
+  });
+
+  resultsGridEl.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
+  resultsGridEl.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
+  updatePlayersUI();
+  
+  resultIdx = -1; // Reset result keyboard navigation
+}
+window.addEventListener('keydown', e => {
+  // Global Space for Play/Pause (only if not typing in search)
+  if (e.code === 'Space' && document.activeElement !== qEl) {
+    e.preventDefault();
+    if (audio.src) {
+      if (isPlaying) audio.pause(); else audio.play();
+    }
+    return;
+  }
+
+  // Escape to clear everything
+  if (e.key === 'Escape') {
+    if (ddEl.style.display === 'block') closeDD();
+    else if (resultsGridEl.style.display === 'flex') {
+       resultsGridEl.style.display = 'none';
+       qEl.value = '';
+    }
+    return;
+  }
+
+  // Results Grid Navigation
+  if (resultsGridEl.style.display === 'flex' && ddEl.style.display !== 'block') {
+    const items = resultsGridEl.querySelectorAll('.result-item:not(.skeleton-item)');
+    if (!items.length) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      resultIdx = (resultIdx + 1) % items.length;
+      hlResult(items);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      resultIdx = (resultIdx - 1 + items.length) % items.length;
+      hlResult(items);
+    } else if (e.key === 'Enter' && resultIdx >= 0) {
+      e.preventDefault();
+      items[resultIdx].click();
+    }
+  }
+});
+
+function hlResult(items) {
+  items.forEach((el, i) => {
+    el.classList.toggle('active', i === resultIdx);
+    if (i === resultIdx) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+async function pickResult(it, el) {
+  // FLIP Technique
+  const first = el.getBoundingClientRect();
+  
+  // Prepare the UI
+  resultsGridEl.querySelectorAll('.result-item').forEach(item => {
+    if (item !== el) item.classList.add('fade-out');
+  });
+
+  qEl.value = `${it.title} — ${it.artist}`;
+  
+  // Transition to Card
+  setTimeout(async () => {
+    resultsGridEl.style.display = 'none';
+    setWide(false);
+    
+    // Setup card for measurement
+    populateUI(it.title, it.artist, it.art, it.previewUrl, null);
+    cardEl.style.display = 'block';
+    
+    const targetMeta = cardEl.querySelector('.card-meta');
+    const last = targetMeta.getBoundingClientRect();
+    
+    // Smooth fade of links
+    linksEl.style.opacity = '0';
+
+    // Invert
+    const deltaY = first.top - last.top;
+    const deltaX = first.left - last.left;
+    const deltaW = first.width / last.width;
+    const deltaH = first.height / last.height;
+
+    targetMeta.style.transformOrigin = 'top left';
+    targetMeta.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(${deltaW}, ${deltaH})`;
+    targetMeta.style.transition = 'none';
+
+    // Play
+    requestAnimationFrame(() => {
+      targetMeta.classList.add('flipping');
+      targetMeta.style.transform = '';
+      targetMeta.style.transition = '';
+      
+      setTimeout(() => {
+        targetMeta.classList.remove('flipping');
+        linksEl.style.transition = 'opacity 0.5s ease';
+        linksEl.style.opacity = '1';
+        resolve(it);
+      }, 500);
+    });
+  }, 50);
+}
+
+function setWide(on) {
+  if (on) wrapEl.classList.add('wide');
+  else wrapEl.classList.remove('wide');
+}
 
 let lastResolvedKey = null;
 
@@ -470,12 +751,29 @@ function populateUI(title, artist, art, preview, links) {
   const pWrap = document.getElementById('playerWrap');
   if (preview) {
     pWrap.style.display = 'flex';
-    const currentSrc = audio.src.split('?')[0];
-    const nextSrc = preview.split('?')[0];
-    if (currentSrc !== nextSrc) { audio.src = preview; audio.load(); }
+    
+    const nextSrc = normalizeUrl(preview);
+    const currentSrc = normalizeUrl(audio.src);
+
+    if (currentSrc !== nextSrc) {
+       const wasPlaying = isPlaying;
+       audio.pause();
+       audio.src = preview; 
+       audio.load(); 
+       if (wasPlaying) audio.play();
+    } else if (isPlaying && audio.paused) {
+       // Same source, user wants it playing, but it's paused for some reason.
+       audio.play();
+    }
+    updatePlayersUI();
   } else {
     pWrap.style.display = 'none';
-    audio.pause();
+    // Only reset if we are explicitly clearing (not just resolving a new item)
+    if (!title && !artist) {
+      audio.pause();
+      audio.src = '';
+      updatePlayersUI();
+    }
   }
 
   linksEl.innerHTML = '';
@@ -565,14 +863,7 @@ function makeRow(p, href) {
 }
 
 function setLoad(on) {
-  if (on && typeof audio !== 'undefined') { 
-    try { 
-      audio.pause(); 
-      audio.currentTime = 0;
-      updatePlayBtn();
-    } catch (e) { } 
-  }
-  if (on && cardEl.style.display !== 'block') loaderEl.style.display = 'block';
+  if (on && cardEl.style.display !== 'block' && resultsGridEl.style.display !== 'flex') loaderEl.style.display = 'block';
   else loaderEl.style.display = 'none';
   if (on) errEl.style.display = 'none';
 }
