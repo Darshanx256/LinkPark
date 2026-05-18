@@ -58,3 +58,4 @@ export const PLACEHOLDERS = ['Type a few lyrics…', 'Search a song…', 'Drop a
  * Storage keys.
  */
 export const SAVED_KEY = 'linkpark_saved';
+export const RECENT_KEY = 'lp_recent';

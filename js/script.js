@@ -1,6 +1,6 @@
 import {
   ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY,
-  COUNTRY, SMAP, SREV, P, PLACEHOLDERS, SAVED_KEY
+  COUNTRY, SMAP, SREV, P, PLACEHOLDERS, SAVED_KEY, RECENT_KEY
 } from './constants.js';
 
 /** 
@@ -156,6 +156,7 @@ const resultsGridEl = document.getElementById('resultsGrid');
 const stashSectionEl = document.getElementById('stashSection');
 const stashGridEl = document.getElementById('stashGrid');
 const wrapEl = document.querySelector('.wrap');
+const FALLBACK_ART = 'assets/no-album-art.svg';
 
 if (logoEl) {
   logoEl.addEventListener('click', () => {
@@ -371,6 +372,10 @@ document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => 
 
 window.addEventListener('load', async () => {
   const s = new URLSearchParams(window.location.search).get('s');
+  const stashModal = document.getElementById('stashModal');
+  const stashSection = document.getElementById('stashSection');
+  stashSection?.querySelector('.launcher')?.addEventListener('click', openStashModal);
+
   if (s) {
     const data = await decodeShare(s);
     if (data) {
@@ -417,6 +422,7 @@ window.addEventListener('load', async () => {
       setLoad(false);
     }
   } else {
+    renderRecent();
     renderSaved();
   }
 });
@@ -479,7 +485,7 @@ function renderDD(tracks) {
   }));
   ddEl.innerHTML = items.map((it, i) => `
     <div class="dd-item" data-i="${i}" role="option">
-      <img src="${it.thumb}" loading="lazy" onerror="this.onerror=null;this.src='assets/logo.webp';" alt="${esc(it.title)} by ${esc(it.artist)}">
+      <img src="${it.thumb}" loading="lazy" onerror="this.onerror=null;this.src='${FALLBACK_ART}';" alt="${esc(it.title)} by ${esc(it.artist)}">
       <div style="min-width:0">
         <div class="dd-title">${esc(it.title)}</div>
         <div class="dd-artist">${esc(it.artist)}</div>
@@ -541,6 +547,41 @@ function updateSavedStorage(saved) {
   localStorage.setItem(SAVED_KEY, JSON.stringify(saved.slice(0, 50)));
 }
 
+function normalizeArtworkUrl(art, size = '600x600bb') {
+  if (!art || art === FALLBACK_ART) return '';
+  return art
+    .replace('60x60bb', size)
+    .replace('100x100bb', size)
+    .replace('200x200bb', size)
+    .replace('600x600bb', size)
+    .replace('1000x1000bb', size);
+}
+
+function savedKey(data) {
+  return `${data.t || data.title || ''}|${data.a || data.artist || ''}`;
+}
+
+function mergeSavedTrack(target, source) {
+  let changed = false;
+  const art = normalizeArtworkUrl(source.art || source.thumbnailUrl || source.thumb);
+  const preview = source.preview || source.previewUrl;
+  const links = source.l || source.links;
+
+  if (art && !target.art) {
+    target.art = art;
+    changed = true;
+  }
+  if (preview && !target.preview) {
+    target.preview = preview;
+    changed = true;
+  }
+  if (links && Object.keys(links).length > 0 && (!target.l || Object.keys(target.l).length === 0)) {
+    target.l = links;
+    changed = true;
+  }
+  return changed;
+}
+
 function toggleSaved(data) {
   if (!data.t && !data.title) return;
   const saved = getSaved();
@@ -548,19 +589,18 @@ function toggleSaved(data) {
   const a = data.a || data.artist;
   const key = `${t}|${a}`;
   
-  const idx = saved.findIndex(f => `${f.t || f.title}|${f.a || f.artist}` === key);
+  const idx = saved.findIndex(f => savedKey(f) === key);
   
   if (idx > -1) {
-    // Update links if missing but available in new data
-    if (!saved[idx].l && data.l && Object.keys(data.l).length > 0) {
-      saved[idx].l = data.l;
+    if (mergeSavedTrack(saved[idx], data)) {
+      updateSavedStorage(saved);
     } else {
       saved.splice(idx, 1);
     }
   } else {
     saved.unshift({
       t, a,
-      art: data.art,
+      art: normalizeArtworkUrl(data.art || data.thumbnailUrl || data.thumb),
       preview: data.preview || data.previewUrl,
       l: data.l || null,
       ts: Date.now()
@@ -571,75 +611,69 @@ function toggleSaved(data) {
   renderSaved();
   
   // Update UI stars
-  const active = getSaved().some(f => `${f.t || f.title}|${f.a || f.artist}` === key);
-  document.querySelectorAll(`.save-btn[data-key="${key.replace(/"/g, '&quot;')}"]`)
-    .forEach(btn => btn.classList.toggle('active', active));
+  const active = getSaved().some(f => savedKey(f) === key);
+  document.querySelectorAll('.save-btn').forEach(btn => {
+    if (btn.dataset.key === key) btn.classList.toggle('active', active);
+  });
 }
 
 function renderSaved() {
   const saved = getSaved();
-  if (!saved.length || resultsGridEl.style.display === 'flex' || cardEl.style.display === 'block') {
-    stashSectionEl.style.display = 'none';
-    return;
-  }
-
-  stashSectionEl.style.display = 'flex';
-  const top20 = saved.slice(0, 20);
+  const isHome = resultsGridEl.style.display !== 'flex' && cardEl.style.display !== 'block';
   
-  let html = top20.map((it, i) => `
-    <div class="result-item" data-i="${i}" data-preview="${it.preview || ''}" tabindex="0">
-      <div class="card-meta">
-        <img class="card-art" src="${it.art || 'assets/logo.webp'}" loading="lazy" alt="${esc(it.t)} artwork">
-        <div class="card-info">
-          <div class="card-title-wrap">
-            <div class="card-title">${esc(it.t)}</div>
-          </div>
-          <div class="card-artist">${esc(it.a)}</div>
-          <div class="player-wrap" ${it.preview ? '' : 'style="display:none"'}>
-             <button class="play-btn" aria-label="Play preview">
-               <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-             </button>
-             <div class="seek-wrap" role="slider">
-               <div class="seek-bar"><div class="seek-fill"></div></div>
-             </div>
-             <div class="time-label">0:00</div>
+  if (!saved.length || !isHome) {
+    stashSectionEl.style.display = 'none';
+  } else {
+    stashSectionEl.style.display = 'flex';
+    const top20 = saved.slice(0, 20);
+    let html = top20.map((it, i) => `
+      <div class="result-item" data-i="${i}" data-preview="${it.preview || ''}" tabindex="0">
+        <div class="card-meta">
+          <img class="card-art" src="${normalizeArtworkUrl(it.art) || FALLBACK_ART}" onerror="this.onerror=null;this.src='${FALLBACK_ART}';" loading="lazy" alt="${esc(it.t || it.title)} artwork">
+          <div class="card-info">
+            <div class="card-title-wrap">
+              <div class="card-title">${esc(it.t || it.title)}</div>
+            </div>
+            <div class="card-artist">${esc(it.a || it.artist)}</div>
+            <div class="player-wrap" ${it.preview ? '' : 'style="display:none"'}>
+               <button class="play-btn" aria-label="Play preview">
+                 <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+               </button>
+               <div class="seek-wrap" role="slider">
+                 <div class="seek-bar"><div class="seek-fill"></div></div>
+               </div>
+               <div class="time-label">0:00</div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  `).join('');
+    `).join('');
 
-  if (saved.length > 20) {
-    html += `
-      <button id="viewAllStash" class="view-all-btn">
-        View All ${saved.length} Tracks
-      </button>
-    `;
+    if (saved.length > 20) {
+      html += `<button id="viewAllStash" class="view-all-btn">View All ${saved.length} Tracks</button>`;
+    }
+    stashGridEl.innerHTML = html;
+    stashGridEl.classList.toggle('has-mask', saved.length > 5);
+
+    stashGridEl.querySelectorAll('.result-item').forEach((el, i) => {
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('.player-wrap')) return;
+        const it = top20[i];
+        if (!it.l || Object.keys(it.l).length === 0) {
+          resolve({ title: it.t || it.title, artist: it.a || it.artist, art: it.art, previewUrl: it.preview });
+        } else {
+          resolve(it);
+        }
+      });
+    });
+
+    document.getElementById('viewAllStash')?.addEventListener('click', openStashModal);
+    stashGridEl.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
+    stashGridEl.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
+    stashGridEl.querySelectorAll('.card-title').forEach(setupMarquee);
   }
 
-  stashGridEl.innerHTML = html;
-
-  // Mask handled by CSS for scroll indication
-  stashGridEl.classList.toggle('has-mask', saved.length > 5);
-
-  stashGridEl.querySelectorAll('.result-item').forEach((el, i) => {
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('.player-wrap')) return;
-      const it = top20[i];
-      if (!it.l || Object.keys(it.l).length === 0) {
-        resolve({ title: it.t, artist: it.a, art: it.art, previewUrl: it.preview });
-      } else {
-        resolve(it);
-      }
-    });
-  });
-
-  document.getElementById('viewAllStash')?.addEventListener('click', openFavsModal);
-
-  stashGridEl.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
-  stashGridEl.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
-  stashGridEl.querySelectorAll('.card-title').forEach(setupMarquee);
-  updatePlayersUI();
+  renderRecent();
 }
 
 let currentSort = 'date';
@@ -650,6 +684,10 @@ function openFavsModal() {
   stashModal.style.display = 'flex';
   stashIdx = -1;
   renderStash();
+}
+
+function openStashModal() {
+  openFavsModal();
 }
 
 function closeStashModal() {
@@ -671,22 +709,22 @@ document.querySelectorAll('.sort-btn').forEach(btn => {
 function renderStash() {
   let saved = getSaved();
   
-  if (currentSort === 'name') saved.sort((a, b) => a.t.localeCompare(b.t));
-  else if (currentSort === 'artist') saved.sort((a, b) => a.a.localeCompare(b.a));
+  if (currentSort === 'name') saved.sort((a, b) => (a.t || a.title || '').localeCompare(b.t || b.title || ''));
+  else if (currentSort === 'artist') saved.sort((a, b) => (a.a || a.artist || '').localeCompare(b.a || b.artist || ''));
   else saved.sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
   stashFullList.innerHTML = saved.map((it, i) => `
     <div class="stash-item-item" data-preview="${it.preview || ''}">
-      <img src="${it.art || 'assets/logo.webp'}" alt="">
+      <img src="${normalizeArtworkUrl(it.art) || FALLBACK_ART}" onerror="this.onerror=null;this.src='${FALLBACK_ART}';" alt="${esc(it.t || it.title)} artwork">
       <div class="stash-item-info">
-        <div class="stash-item-title">${esc(it.t)}</div>
-        <div class="stash-item-artist">${esc(it.a)}</div>
+        <div class="stash-item-title">${esc(it.t || it.title)}</div>
+        <div class="stash-item-artist">${esc(it.a || it.artist)}</div>
       </div>
       <div class="rect-actions player-wrap">
         <button class="play-btn rect-play-btn" aria-label="Play preview">
           <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         </button>
-        <button class="rect-save-btn active" data-key="${(it.t + '|' + it.a).replace(/"/g, '&quot;')}">
+        <button class="rect-save-btn active" data-key="${savedKey(it).replace(/"/g, '&quot;')}">
           <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
         </button>
       </div>
@@ -699,7 +737,7 @@ function renderStash() {
       closeStashModal();
       const it = saved[i];
       if (!it.l || Object.keys(it.l).length === 0) {
-        resolve({ title: it.t, artist: it.a, art: it.art, previewUrl: it.preview });
+        resolve({ title: it.t || it.title, artist: it.a || it.artist, art: normalizeArtworkUrl(it.art), previewUrl: it.preview });
       } else {
         resolve(it);
       }
@@ -762,6 +800,7 @@ async function search(q) {
       return; 
     }
     renderResultsGrid(d.results);
+    updateRecentSearch(q);
   } catch (e) {
     showErr('Failed to fetch search results.');
   } finally {
@@ -798,7 +837,7 @@ function renderResultsGrid(tracks, isSkeleton = false) {
     appleUrl: t.trackViewUrl,
     title: t.trackName,
     artist: t.artistName,
-    art: (t.artworkUrl100 || t.artworkUrl60).replace('100x100bb', '600x600bb'),
+    art: normalizeArtworkUrl(t.artworkUrl100 || t.artworkUrl60),
     previewUrl: t.previewUrl,
     album: t.collectionName || '',
   }));
@@ -899,7 +938,7 @@ async function pickResult(it, el) {
     setWide(false);
     
     populateUI(it.title, it.artist, it.art, it.previewUrl, null);
-    currentData = { t: it.title, a: it.artist, art: it.art, preview: it.previewUrl, l: {} };
+    currentData = { t: it.title, a: it.artist, art: normalizeArtworkUrl(it.art), preview: it.previewUrl, l: {} };
     cardEl.style.display = 'block';
     
     const targetMeta = cardEl.querySelector('.card-meta');
@@ -925,7 +964,8 @@ async function pickResult(it, el) {
         targetMeta.classList.remove('flipping');
         linksEl.style.transition = 'opacity 0.5s ease';
         linksEl.style.opacity = '1';
-        resolve(it);
+        updateRecentSearch(it.title); // Save search text if it was a direct pick? No, the user said "just text, not tracks".
+        resolve(it, false);
       }, 500);
     });
   }, 50);
@@ -938,7 +978,7 @@ function setWide(on) {
 
 let lastResolvedKey = null;
 
-async function resolve(data) {
+async function resolve(data, shouldSave = true) {
   stashSectionEl.style.display = 'none';
   const t = data.t || data.title || '';
   const a = data.a || data.artist || '';
@@ -950,8 +990,12 @@ async function resolve(data) {
   let item = typeof data === 'object' ? data : null;
   const isUrl = typeof data === 'string';
 
-  if (item) populateUI(t, a, item.art || item.thumb?.replace('100x100bb', '600x600bb'), item.preview || item.previewUrl, null);
-  else populateUI('', '', '', null, null);
+  if (item) {
+    currentData = { t, a, art: normalizeArtworkUrl(item.art || item.thumb), preview: item.preview || item.previewUrl, l: item.l || {} };
+    populateUI(t, a, currentData.art, currentData.preview, null);
+  } else {
+    populateUI('', '', '', null, null);
+  }
   cardEl.style.display = 'block';
   setLoad(true);
 
@@ -997,11 +1041,11 @@ async function resolve(data) {
             const ent = localData.entitiesByUniqueId?.[localData.entityUniqueId] || {};
             const finalT = ent.title || t;
             const finalA = ent.artistName || a;
-            const finalArt = ent.thumbnailUrl || item.art;
+            const finalArt = normalizeArtworkUrl(ent.thumbnailUrl || item.art);
 
             populateUI(finalT, finalA, finalArt, item.preview || item.previewUrl, localLinks);
-            currentData = { t: finalT, a: finalA, itunesId: null, l: localLinks };
-            syncSavedLinks(currentData);
+            currentData = { t: finalT, a: finalA, art: finalArt, preview: item.preview || item.previewUrl, itunesId: null, l: localLinks };
+            syncSavedTrackData(currentData);
             return;
           }
         }
@@ -1014,20 +1058,21 @@ async function resolve(data) {
     if (it?.results?.[0]) {
       const r = it.results[0];
       if (!(item.preview || item.previewUrl)) item.preview = r.previewUrl;
-      if (!item.art) item.art = r.artworkUrl100.replace('100x100bb', '600x600bb');
+      if (!item.art) item.art = normalizeArtworkUrl(r.artworkUrl100);
       if (!res.links.appleMusic) res.links.appleMusic = r.trackViewUrl;
     }
 
     const finalT = res.title || t;
     const finalA = res.artist || a;
-    const finalArt = res.art || item.art;
+    const finalArt = normalizeArtworkUrl(res.art || item.art);
     const finalPreview = res.preview || item.preview || item.previewUrl;
 
     const itunesId = res.links.appleMusic?.match(/[?&]i=(\d+)/)?.[1] || null;
     populateUI(finalT, finalA, finalArt, finalPreview, res.links);
-    currentData = { t: finalT, a: finalA, itunesId, l: res.links };
+    currentData = { t: finalT, a: finalA, art: finalArt, preview: finalPreview, itunesId, l: res.links };
     
-    syncSavedLinks(currentData);
+    if (shouldSave) updateRecentSearch(currentData);
+    syncSavedTrackData(currentData);
 
   } catch (e) {
     console.error('Resolve failed:', e);
@@ -1037,13 +1082,13 @@ async function resolve(data) {
   }
 }
 
-function syncSavedLinks(data) {
+function syncSavedTrackData(data) {
   const saved = getSaved();
   const key = `${data.t}|${data.a}`;
-  const idx = saved.findIndex(f => `${f.t || f.title}|${f.a || f.artist}` === key);
-  if (idx > -1 && (!saved[idx].l || Object.keys(saved[idx].l).length === 0)) {
-    saved[idx].l = data.l;
+  const idx = saved.findIndex(f => savedKey(f) === key);
+  if (idx > -1 && mergeSavedTrack(saved[idx], data)) {
     updateSavedStorage(saved);
+    renderSaved();
   }
 }
 
@@ -1061,15 +1106,19 @@ function populateUI(title, artist, art, preview, links) {
     const data = currentData || { t: title, a: artist, art, preview, l: links || {} };
     toggleSaved(data);
   };
-  favBtn.classList.toggle('active', getSaved().some(f => `${f.t}|${f.a}` === key));
+  favBtn.classList.toggle('active', getSaved().some(f => savedKey(f) === key));
   favBtn.style.display = title ? 'flex' : 'none';
 
   if (!art && !title) { artEl.src = BLANK; artEl.classList.add('skeleton'); }
   else { 
     artEl.classList.remove('skeleton'); 
-    artEl.src = art?.replace('200x200bb', '600x600bb') || 'assets/logo.webp';
+    const displayArt = normalizeArtworkUrl(art);
+    artEl.src = displayArt || FALLBACK_ART;
     artEl.style.cursor = 'zoom-in';
-    artEl.onclick = () => openImgModal(art?.replace('200x200bb', '1000x1000bb').replace('600x600bb', '1000x1000bb'));
+    artEl.onclick = () => {
+      const fullArt = normalizeArtworkUrl(displayArt, '1000x1000bb');
+      if (fullArt) openImgModal(fullArt);
+    };
   }
   artEl.alt = title ? `${title} — ${artist} album artwork` : '';
 
@@ -1213,7 +1262,7 @@ function setLoad(on) {
 
 function showErr(msg) { errEl.textContent = msg; errEl.style.display = 'block'; loaderEl.style.display = 'none'; }
 function enc(s) { return encodeURIComponent(s); }
-function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 let phIdx = 1;
 setInterval(() => {
@@ -1305,4 +1354,58 @@ function updateStashSelection() {
   const items = stashFullList.querySelectorAll('.stash-item-item');
   items.forEach((item, i) => item.classList.toggle('active', i === stashIdx));
   if (stashIdx !== -1) items[stashIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function updateRecentSearch(val) {
+  if (!val) return;
+  let text = typeof val === 'string' ? val : `${val.t || val.title} — ${val.a || val.artist}`;
+  let data = typeof val === 'object' ? val : null;
+
+  let recent = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+  recent = recent.filter(r => r.text !== text);
+  recent.unshift({ text, data });
+  localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, 5)));
+  renderRecent();
+}
+
+function clearRecent() {
+  localStorage.removeItem(RECENT_KEY);
+  renderRecent();
+}
+
+function renderRecent() {
+  const section = document.getElementById('recentSection');
+  const grid = document.getElementById('recentGrid');
+  const clearBtn = document.getElementById('clearRecent');
+  if (!section || !grid) return;
+
+  const isHome = resultsGridEl.style.display !== 'flex' && cardEl.style.display !== 'block';
+  let recent = [];
+  try { recent = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); }
+  catch (e) { recent = []; }
+
+  if (!recent.length || !isHome) {
+    section.style.display = 'none';
+    grid.innerHTML = '';
+    return;
+  }
+
+  section.style.display = 'flex';
+  grid.innerHTML = recent.map((it, i) => `
+    <button class="recent-chip" type="button" data-i="${i}" title="${esc(it.text)}">${esc(it.text)}</button>
+  `).join('');
+
+  grid.querySelectorAll('.recent-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const it = recent[Number(btn.dataset.i)];
+      if (!it) return;
+      if (it.data) resolve(it.data, false);
+      else {
+        qEl.value = it.text;
+        search(it.text);
+      }
+    });
+  });
+
+  if (clearBtn) clearBtn.onclick = clearRecent;
 }

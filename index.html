@@ -52,8 +52,16 @@
       <div class="error" id="err" role="alert"></div>
       <div id="resultsGrid" class="results-grid" style="display:none"></div>
       
+      <div id="recentSection" class="stash-section" style="display:none">
+        <div class="stash-header" style="display:flex; justify-content:center; align-items:center; gap:10px; margin-bottom:1.5rem">
+          <h2 class="stash-title" style="margin:0">Recent</h2>
+          <button id="clearRecent" class="clear-btn" title="Clear History" style="background:transparent; border:none; color:#666; cursor:pointer; font-size:0.8rem; padding:4px">&times;</button>
+        </div>
+        <div id="recentGrid" class="recent-grid"></div>
+      </div>
+
       <div id="stashSection" class="stash-section">
-        <h2 class="stash-title">Saved Songs</h2>
+        <h2 class="stash-title launcher" title="Open full stash">Saved Songs</h2>
         <div id="stashGrid" class="results-grid"></div>
       </div>
 
