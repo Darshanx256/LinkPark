@@ -1465,16 +1465,18 @@ header p {
 .recent-chip {
   background: rgba(255,255,255,0.05);
   border: 1px solid var(--border2);
+  color: var(--text);
   padding: 6px 14px;
-  border-radius: var(--radius-sm);
-  font-size: 0.75rem;
+  border-radius: 100px;
+  font-size: 0.8rem;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
   max-width: 140px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  opacity: 0.7;
+  opacity: 0.8;
 }
 
 @media (min-width: 760px) {
@@ -1503,6 +1505,7 @@ header p {
 .recent-chip:hover {
   background: rgba(255,255,255,0.1);
   border-color: var(--accent);
+  color: #fff;
   transform: translateY(-2px);
   opacity: 1;
 }
