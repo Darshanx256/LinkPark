@@ -163,6 +163,7 @@ if (logoEl) {
     qEl.value = '';
     closeDD();
     cardEl.style.display = 'none';
+    lastResolvedKey = null;
     resultsGridEl.style.display = 'none';
     setWide(false);
     errEl.style.display = 'none';
@@ -810,6 +811,7 @@ async function search(q) {
 
 function renderResultsGrid(tracks, isSkeleton = false) {
   cardEl.style.display = 'none';
+  lastResolvedKey = null;
   stashSectionEl.style.display = 'none';
   setWide(false);
   resultsGridEl.style.display = 'flex';
@@ -1338,6 +1340,7 @@ document.addEventListener('keydown', (e) => {
         closeStashModal();
       } else if (cardEl.style.display === 'block') {
         cardEl.style.display = 'none';
+        lastResolvedKey = null;
         renderSaved();
       } else if (ddEl.style.display === 'block') {
         ddEl.style.display = 'none';
