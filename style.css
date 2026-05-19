@@ -712,6 +712,7 @@ header p {
   color: var(--muted);
   transition: color 0.2s, transform 0.2s;
   z-index: 10;
+  will-change: transform;
 }
 
 .flipping .save-btn {
@@ -719,8 +720,13 @@ header p {
   visibility: hidden;
 }
 
-.save-btn:hover, .save-btn:active {
-  transform: scale(1.2);
+.save-btn:hover {
+  transform: scale(1.1);
+  color: var(--save);
+}
+
+.save-btn:active {
+  transform: scale(0.9);
   color: var(--save);
 }
 
@@ -1259,9 +1265,11 @@ header p {
   padding: 10px;
   opacity: 0.8;
   transition: opacity 0.2s, transform 0.2s;
+  will-change: transform;
 }
 
-.rect-save-btn:hover, .rect-save-btn:active { opacity: 1; transform: scale(1.1); }
+.rect-save-btn:hover { opacity: 1; transform: scale(1.1); }
+.rect-save-btn:active { opacity: 1; transform: scale(0.95); }
 
 .rect-save-btn svg {
   width: 22px;

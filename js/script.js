@@ -193,11 +193,11 @@ let modalIndex = -1;
 let stashIdx = -1; // For keyboard navigation in modal
 
 audio1.addEventListener('play', () => { isPlaying = true; updatePlayersUI(); });
-audio1.addEventListener('pause', () => { isPlaying = false; updatePlayersUI(); });
+audio1.addEventListener('pause', () => { if (audio === audio1) isPlaying = false; updatePlayersUI(); });
 audio1.addEventListener('ended', () => { if (audio === audio1) isPlaying = false; updatePlayersUI(); });
 
 audio2.addEventListener('play', () => { isPlaying = true; updatePlayersUI(); });
-audio2.addEventListener('pause', () => { isPlaying = false; updatePlayersUI(); });
+audio2.addEventListener('pause', () => { if (audio === audio2) isPlaying = false; updatePlayersUI(); });
 audio2.addEventListener('ended', () => { if (audio === audio2) isPlaying = false; updatePlayersUI(); });
 
 let lastTimeUpdate = 0;
@@ -1095,6 +1095,7 @@ function syncSavedTrackData(data) {
 }
 
 function populateUI(title, artist, art, preview, links) {
+  modalIndex = -1;
   const artEl = document.getElementById('art');
   const ctitleEl = document.getElementById('ctitle');
   const cartistEl = document.getElementById('cartist');
