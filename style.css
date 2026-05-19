@@ -36,6 +36,7 @@ html::-webkit-scrollbar {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -264,6 +265,7 @@ header p {
 }
 
 .dd-item:hover,
+.dd-item:active,
 .dd-item.active {
   background: #7c6aff14;
   border-left-color: var(--accent);
@@ -398,7 +400,7 @@ header p {
   flex-direction: column;
   gap: var(--gap);
   width: 100%;
-  max-height: 520px;
+  max-height: 42vh;
   overflow-y: auto;
   padding-right: 0;
   scrollbar-width: none;
@@ -435,6 +437,7 @@ header p {
 }
 
 .result-item:hover,
+.result-item:active,
 .result-item.active {
   background: var(--surface2);
   border-color: var(--accent);
@@ -716,7 +719,7 @@ header p {
   visibility: hidden;
 }
 
-.save-btn:hover {
+.save-btn:hover, .save-btn:active {
   transform: scale(1.2);
   color: var(--save);
 }
@@ -762,7 +765,7 @@ header p {
   transition: transform 0.15s, background 0.15s;
 }
 
-.play-btn:hover {
+.play-btn:hover, .play-btn:active {
   transform: scale(1.05);
   background: #8e7dff;
 }
@@ -838,7 +841,7 @@ header p {
   border-bottom: none;
 }
 
-.prow:hover {
+.prow:hover, .prow:active {
   background: #ffffff05;
 }
 
@@ -910,7 +913,7 @@ header p {
   gap: 5px;
 }
 
-.copy-btn:hover {
+.copy-btn:hover, .copy-btn:active {
   color: var(--text);
   background: #ffffff08;
 }
@@ -962,7 +965,7 @@ header p {
   min-height: 36px;
 }
 
-.share-card-btn:hover {
+.share-card-btn:hover, .share-card-btn:active {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
@@ -1121,7 +1124,7 @@ header p {
   background-clip: content-box;
 }
 
-.stash-full-list::-webkit-scrollbar-thumb:hover {
+.stash-full-list::-webkit-scrollbar-thumb:hover, .stash-full-list::-webkit-scrollbar-thumb:active {
   background: rgba(255,255,255,0.4);
   background-clip: content-box;
 }
@@ -1162,7 +1165,7 @@ header p {
   transition: all 0.2s;
 }
 
-.close-btn:hover { background: rgba(255,255,255,0.15); transform: scale(1.1); }
+.close-btn:hover, .close-btn:active { background: rgba(255,255,255,0.15); transform: scale(1.1); }
 
 .modal-sort {
   padding: 1.2rem 2rem;
@@ -1214,7 +1217,7 @@ header p {
   contain: paint;
 }
 
-.stash-item-item:hover {
+.stash-item-item:hover, .stash-item-item:active {
   background: rgba(255,255,255,0.07);
   border-color: var(--border2);
 }
@@ -1258,7 +1261,7 @@ header p {
   transition: opacity 0.2s, transform 0.2s;
 }
 
-.rect-save-btn:hover { opacity: 1; transform: scale(1.1); }
+.rect-save-btn:hover, .rect-save-btn:active { opacity: 1; transform: scale(1.1); }
 
 .rect-save-btn svg {
   width: 22px;
@@ -1282,7 +1285,7 @@ header p {
   transition: all 0.3s;
 }
 
-.view-all-btn:hover {
+.view-all-btn:hover, .view-all-btn:active {
   background: var(--text);
   color: var(--bg);
   transform: translateY(-2px);
@@ -1312,7 +1315,7 @@ header p {
   transition: all 0.2s;
 }
 
-.rect-play-btn:hover {
+.rect-play-btn:hover, .rect-play-btn:active {
   background: var(--accent) !important;
   border-color: var(--accent) !important;
   transform: scale(1.1);
@@ -1448,7 +1451,7 @@ header p {
   transition: all 0.2s;
 }
 
-.stash-title.launcher:hover {
+.stash-title.launcher:hover, .stash-title.launcher:active {
   opacity: 1;
   color: var(--accent);
 }
@@ -1459,7 +1462,7 @@ header p {
   flex-wrap: wrap;
   justify-content: center;
   margin-top: -0.5rem;
-  margin-bottom: 2.5rem;
+  margin-bottom: 1.25rem;
 }
 
 .recent-chip {
@@ -1489,7 +1492,7 @@ header p {
   }
 
   #stashGrid {
-    max-height: min(58vh, 640px);
+    max-height: min(48vh, 540px);
   }
 
   .card-meta {
@@ -1502,7 +1505,7 @@ header p {
   }
 }
 
-.recent-chip:hover {
+.recent-chip:hover, .recent-chip:active {
   background: rgba(255,255,255,0.1);
   border-color: var(--accent);
   color: #fff;
