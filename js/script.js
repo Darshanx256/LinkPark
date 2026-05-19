@@ -1,7 +1,15 @@
 import {
-  ODESLI, PROXY_URL, TFKEY, TFAPI, ODESLI_PROXY,
-  COUNTRY, SMAP, SREV, P, PLACEHOLDERS, SAVED_KEY, RECENT_KEY
+  ODESLI, PROXY_URL, COUNTRY, P, PLACEHOLDERS
 } from './constants.js';
+import {
+  fetchAndSolveChallenge, getPoWHeaders, clearChallengeQueue,
+  encodeShare, decodeShare
+} from './api.js';
+import {
+  getSaved, updateSavedStorage, savedKey, normalizeArtworkUrl,
+  mergeSavedTrack, toggleSaved, syncSavedTrackData,
+  getRecent, updateRecentSearch, clearRecent
+} from './storage.js';
 
 /** 
  * Unique identifier for the current resolution request.
@@ -10,125 +18,8 @@ import {
 let lastResolveId = 0;
 let currentData = null; // Stores currently resolved track for sharing
 
-const challengeQueue = []; // Array of { promise, ts }
 let isSearching = false;
 let resultIdx = -1; // Global keyboard navigation index for results grid
-
-async function solvePoW(seed, difficulty) {
-  const target = '0'.repeat(difficulty);
-  const encoder = new TextEncoder();
-  let nonce = 0;
-  
-  while (true) {
-    const data = encoder.encode(seed + nonce);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    
-    if (hashHex.startsWith(target)) return nonce;
-    nonce++;
-
-    if (nonce % 500 === 0) await new Promise(r => setTimeout(r, 0));
-  }
-}
-
-function fetchAndSolveChallenge() {
-  if (!PROXY_URL) return;
-  const ts = Date.now();
-  const promise = (async () => {
-    try {
-      const res = await fetch(`${PROXY_URL}/api/challenge`);
-      if (!res.ok) throw new Error('Challenge fetch failed');
-      const { seed, difficulty } = await res.json();
-      const nonce = await solvePoW(seed, difficulty);
-      return { seed, nonce, ts };
-    } catch (e) {
-      // Quietly handle challenge failure to prevent blocking search
-      const idx = challengeQueue.findIndex(item => item.promise === promise);
-      if (idx > -1) challengeQueue.splice(idx, 1);
-      return null; 
-    }
-  })();
-  challengeQueue.push({ promise, ts });
-}
-
-async function getPoWHeaders() {
-  if (!PROXY_URL) return { 'X-API-Key': TFKEY };
-  const now = Date.now();
-  while (challengeQueue.length > 0 && (now - challengeQueue[0].ts > 90000)) {
-    challengeQueue.shift();
-  }
-  if (challengeQueue.length === 0) fetchAndSolveChallenge();
-  try {
-    const item = challengeQueue.shift();
-    if (!item) return {};
-    const pow = await item.promise;
-    if (!pow) return {}; // Failed challenge
-    if (challengeQueue.length < 2) fetchAndSolveChallenge();
-    return { 'X-LP-Seed': pow.seed, 'X-LP-Nonce': pow.nonce.toString() };
-  } catch (e) {
-    return {};
-  }
-}
-
-async function compress(str) {
-  const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('deflate'));
-  const buffer = await new Response(stream).arrayBuffer();
-  return btoa(String.fromCharCode(...new Uint8Array(buffer)))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-async function decompress(b64) {
-  try {
-    const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
-    return await new Response(stream).text();
-  } catch (e) { return null; }
-}
-
-async function encodeShare(d) {
-  const sl = [];
-  const EXCLUSIVE = ['amazonMusic', 'tidal', 'deezer', 'pandora'];
-  for (const pid of EXCLUSIVE) {
-    if (d.l[pid]) {
-      const k = SREV[pid] || pid;
-      let v = d.l[pid];
-      if (pid === 'amazonMusic') v = v.match(/[?&]trackAsin=([a-zA-Z0-9]+)/)?.[1] || v;
-      else if (pid === 'tidal') v = v.match(/track\/(\d+)/)?.[1] || v;
-      else if (pid === 'deezer') v = v.match(/track\/(\d+)/)?.[1] || v;
-      else if (pid === 'pandora') v = v.match(/TR:(\d+)/)?.[1] || v;
-      sl.push(`${k}:${v}`);
-    }
-  }
-  const itid = d.l.appleMusic?.match(/[?&]i=(\d+)/)?.[1] || '';
-  const pipe = [d.t, d.a, itid, sl.join(',')].join('|');
-  return await compress(pipe);
-}
-
-async function decodeShare(s) {
-  const pipe = await decompress(s);
-  if (!pipe) return null;
-  try {
-    const a = pipe.split('|');
-    const links = {};
-    const sl = (a[3] || '').split(',');
-    sl.forEach(pair => {
-      const [k, ...rest] = pair.split(':');
-      const pid = SMAP[k] || k;
-      let val = rest.join(':');
-      if (val && !val.startsWith('http')) {
-        if (pid === 'amazonMusic') val = `https://music.amazon.com/albums/_?trackAsin=${val}`;
-        else if (pid === 'tidal') val = `https://listen.tidal.com/track/${val}`;
-        else if (pid === 'deezer') val = `https://www.deezer.com/track/${val}`;
-        else if (pid === 'pandora') val = `https://www.pandora.com/TR:${val}`;
-      }
-      if (pid && val) links[pid] = val;
-    });
-    return { t: a[0], a: a[1], itunesId: a[2], l: links };
-  } catch (e) { return null; }
-}
 
 /**
  * Normalizes a URL by removing query parameters and ensuring consistent origin.
@@ -388,7 +279,7 @@ window.addEventListener('load', async () => {
           const h = await getPoWHeaders();
           const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(data.t + ' ' + data.a)}&artist=${enc(data.a)}&country=${COUNTRY}`, { headers: h });
           if (r.status === 401 && retry) {
-             challengeQueue.length = 0;
+             clearChallengeQueue();
              return fetchResolve(false);
           }
           return r.ok ? r.json() : null;
@@ -539,84 +430,6 @@ document.getElementById('searchForm')?.addEventListener('submit', e => {
   else { search(v); }
 });
 
-function getSaved() {
-  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); }
-  catch (e) { return []; }
-}
-
-function updateSavedStorage(saved) {
-  localStorage.setItem(SAVED_KEY, JSON.stringify(saved.slice(0, 50)));
-}
-
-function normalizeArtworkUrl(art, size = '600x600bb') {
-  if (!art || art === FALLBACK_ART) return '';
-  return art
-    .replace('60x60bb', size)
-    .replace('100x100bb', size)
-    .replace('200x200bb', size)
-    .replace('600x600bb', size)
-    .replace('1000x1000bb', size);
-}
-
-function savedKey(data) {
-  return `${data.t || data.title || ''}|${data.a || data.artist || ''}`;
-}
-
-function mergeSavedTrack(target, source) {
-  let changed = false;
-  const art = normalizeArtworkUrl(source.art || source.thumbnailUrl || source.thumb);
-  const preview = source.preview || source.previewUrl;
-  const links = source.l || source.links;
-
-  if (art && !target.art) {
-    target.art = art;
-    changed = true;
-  }
-  if (preview && !target.preview) {
-    target.preview = preview;
-    changed = true;
-  }
-  if (links && Object.keys(links).length > 0 && (!target.l || Object.keys(target.l).length === 0)) {
-    target.l = links;
-    changed = true;
-  }
-  return changed;
-}
-
-function toggleSaved(data) {
-  if (!data.t && !data.title) return;
-  const saved = getSaved();
-  const t = data.t || data.title;
-  const a = data.a || data.artist;
-  const key = `${t}|${a}`;
-  
-  const idx = saved.findIndex(f => savedKey(f) === key);
-  
-  if (idx > -1) {
-    if (mergeSavedTrack(saved[idx], data)) {
-      updateSavedStorage(saved);
-    } else {
-      saved.splice(idx, 1);
-    }
-  } else {
-    saved.unshift({
-      t, a,
-      art: normalizeArtworkUrl(data.art || data.thumbnailUrl || data.thumb),
-      preview: data.preview || data.previewUrl,
-      l: data.l || null,
-      ts: Date.now()
-    });
-  }
-  
-  updateSavedStorage(saved);
-  renderSaved();
-  
-  // Update UI stars
-  const active = getSaved().some(f => savedKey(f) === key);
-  document.querySelectorAll('.save-btn').forEach(btn => {
-    if (btn.dataset.key === key) btn.classList.toggle('active', active);
-  });
-}
 
 function renderSaved() {
   const saved = getSaved();
@@ -745,7 +558,7 @@ function renderStash() {
     });
     el.querySelector('.rect-save-btn').addEventListener('click', (e) => {
       e.stopPropagation();
-      toggleSaved(saved[i]);
+      toggleSaved(saved[i], renderSaved);
       renderStash();
     });
     el.querySelector('.rect-play-btn').addEventListener('click', (e) => {
@@ -801,7 +614,7 @@ async function search(q) {
       return; 
     }
     renderResultsGrid(d.results);
-    updateRecentSearch(q);
+    _updateRecentSearch(q);
   } catch (e) {
     showErr('Failed to fetch search results.');
   } finally {
@@ -966,7 +779,7 @@ async function pickResult(it, el) {
         targetMeta.classList.remove('flipping');
         linksEl.style.transition = 'opacity 0.5s ease';
         linksEl.style.opacity = '1';
-        updateRecentSearch(it.title); // Save search text if it was a direct pick? No, the user said "just text, not tracks".
+        _updateRecentSearch(it.title); // Save search text if it was a direct pick? No, the user said "just text, not tracks".
         resolve(it, false);
       }, 500);
     });
@@ -1010,7 +823,7 @@ async function resolve(data, shouldSave = true) {
       const h = await getPoWHeaders();
       const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(q)}&u=${enc(u)}&artist=${enc(a)}&album=${enc(item?.album || '')}&country=${COUNTRY}`, { headers: h });
       if (r.status === 401 && retry) {
-        challengeQueue.length = 0;
+        clearChallengeQueue();
         return fetchResolve(false);
       }
       return r.ok ? r.json() : null;
@@ -1047,7 +860,7 @@ async function resolve(data, shouldSave = true) {
 
             populateUI(finalT, finalA, finalArt, item.preview || item.previewUrl, localLinks);
             currentData = { t: finalT, a: finalA, art: finalArt, preview: item.preview || item.previewUrl, itunesId: null, l: localLinks };
-            syncSavedTrackData(currentData);
+            syncSavedTrackData(currentData, renderSaved);
             return;
           }
         }
@@ -1073,8 +886,8 @@ async function resolve(data, shouldSave = true) {
     populateUI(finalT, finalA, finalArt, finalPreview, res.links);
     currentData = { t: finalT, a: finalA, art: finalArt, preview: finalPreview, itunesId, l: res.links };
     
-    if (shouldSave) updateRecentSearch(currentData);
-    syncSavedTrackData(currentData);
+    if (shouldSave) _updateRecentSearch(currentData);
+    syncSavedTrackData(currentData, renderSaved);
 
   } catch (e) {
     console.error('Resolve failed:', e);
@@ -1084,15 +897,7 @@ async function resolve(data, shouldSave = true) {
   }
 }
 
-function syncSavedTrackData(data) {
-  const saved = getSaved();
-  const key = `${data.t}|${data.a}`;
-  const idx = saved.findIndex(f => savedKey(f) === key);
-  if (idx > -1 && mergeSavedTrack(saved[idx], data)) {
-    updateSavedStorage(saved);
-    renderSaved();
-  }
-}
+
 
 function populateUI(title, artist, art, preview, links) {
   modalIndex = -1;
@@ -1107,7 +912,7 @@ function populateUI(title, artist, art, preview, links) {
   favBtn.onclick = () => {
     // If resolution isn't done, save with what we have (title, artist, etc.)
     const data = currentData || { t: title, a: artist, art, preview, l: links || {} };
-    toggleSaved(data);
+    toggleSaved(data, renderSaved);
   };
   favBtn.classList.toggle('active', getSaved().some(f => savedKey(f) === key));
   favBtn.style.display = title ? 'flex' : 'none';
@@ -1360,20 +1165,13 @@ function updateStashSelection() {
   if (stashIdx !== -1) items[stashIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
-function updateRecentSearch(val) {
-  if (!val) return;
-  let text = typeof val === 'string' ? val : `${val.t || val.title} — ${val.a || val.artist}`;
-  let data = typeof val === 'object' ? val : null;
-
-  let recent = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
-  recent = recent.filter(r => r.text !== text);
-  recent.unshift({ text, data });
-  localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, 5)));
+function _updateRecentSearch(val) {
+  updateRecentSearch(val);
   renderRecent();
 }
 
-function clearRecent() {
-  localStorage.removeItem(RECENT_KEY);
+function _clearRecent() {
+  clearRecent();
   renderRecent();
 }
 
@@ -1384,9 +1182,7 @@ function renderRecent() {
   if (!section || !grid) return;
 
   const isHome = resultsGridEl.style.display !== 'flex' && cardEl.style.display !== 'block';
-  let recent = [];
-  try { recent = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); }
-  catch (e) { recent = []; }
+  const recent = getRecent();
 
   if (!recent.length || !isHome) {
     section.style.display = 'none';
@@ -1411,5 +1207,5 @@ function renderRecent() {
     });
   });
 
-  if (clearBtn) clearBtn.onclick = clearRecent;
+  if (clearBtn) clearBtn.onclick = _clearRecent;
 }

@@ -72,8 +72,22 @@ function cacheGet(key) {
 const sessionLimit = new Map();
 const apiLimit = new Map();
 
-/** In-flight request deduplication */
-const pendingItunes = new Map();
+/**
+ * Generic in-flight request deduplicator.
+ * Prevents the "thundering herd" problem by coalescing concurrent
+ * requests for the same key into a single upstream call.
+ */
+class RequestDeduplicator {
+  constructor() { this.pending = new Map(); }
+  async dedupe(key, fn) {
+    if (this.pending.has(key)) return this.pending.get(key);
+    const task = fn().finally(() => this.pending.delete(key));
+    this.pending.set(key, task);
+    return task;
+  }
+}
+
+const dedup = new RequestDeduplicator();
 
 /** User-Agent Pool for rotation */
 const userAgents = [
@@ -438,27 +452,29 @@ async function resolveSearch(query) {
   const cached = cacheGet(cacheKey);
   if (cached) return JSON.parse(cached);
 
-  const keyOrder = shuffleKeys();
-  const maxAttempts = Math.min(keyOrder.length, 9);
+  return dedup.dedupe(cacheKey, async () => {
+    const keyOrder = shuffleKeys();
+    const maxAttempts = Math.min(keyOrder.length, 9);
 
-  for (let i = 0; i < maxAttempts; i++) {
-    const currentKey = TFKEYS[keyOrder[i]];
-    try {
-      const response = await fetch(
-        `https://api.search.tinyfish.ai/?query=${encodeURIComponent(query)}`,
-        { headers: { 'X-API-Key': currentKey }, timeout: 6000 }
-      );
-      if (response.ok) {
-        const text = await response.text();
-        try {
-          const data = JSON.parse(text);
-          cacheSet(cacheKey, text);
-          return data;
-        } catch (e) { continue; }
-      }
-    } catch (error) { continue; }
-  }
-  return null;
+    for (let i = 0; i < maxAttempts; i++) {
+      const currentKey = TFKEYS[keyOrder[i]];
+      try {
+        const response = await fetch(
+          `https://api.search.tinyfish.ai/?query=${encodeURIComponent(query)}`,
+          { headers: { 'X-API-Key': currentKey }, timeout: 6000 }
+        );
+        if (response.ok) {
+          const text = await response.text();
+          try {
+            const data = JSON.parse(text);
+            cacheSet(cacheKey, text);
+            return data;
+          } catch (e) { continue; }
+        }
+      } catch (error) { continue; }
+    }
+    return null;
+  });
 }
 
 async function simulateTinyfishSearch(query) {
@@ -502,10 +518,7 @@ async function resolveItunes(query, country = 'US') {
   const cached = cacheGet(cacheKey);
   if (cached) return JSON.parse(cached);
 
-  // Deduplicate in-flight requests for the same query/country
-  if (pendingItunes.has(cacheKey)) return pendingItunes.get(cacheKey);
-
-  const fetchTask = (async () => {
+  return dedup.dedupe(cacheKey, async () => {
     try {
       const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=1&country=${country}`, { timeout: 8000 });
       if (r.ok) {
@@ -519,14 +532,9 @@ async function resolveItunes(query, country = 'US') {
       }
     } catch (e) {
       console.error(`[itunes] Search failed for ${query}: ${e.message}`);
-    } finally {
-      pendingItunes.delete(cacheKey);
     }
     return null;
-  })();
-
-  pendingItunes.set(cacheKey, fetchTask);
-  return fetchTask;
+  });
 }
 
 app.get('/api/challenge', requireAllowedOrigin, (req, res) => {
