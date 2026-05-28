@@ -54,7 +54,8 @@ body::before {
   content: '';
   position: fixed;
   inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  background-image: url("assets/noise_bg.png");
+  background-repeat: repeat;
   pointer-events: none;
   z-index: 0;
 }
@@ -77,42 +78,6 @@ main {
 }
 
 /* ─── Dynamic Logo ─── */
-@property --pink-x {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: 75%;
-}
-
-@property --pink-y {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: 30%;
-}
-
-@property --pink-s {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: 25%;
-}
-
-@property --blue-x {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: 25%;
-}
-
-@property --blue-y {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: 75%;
-}
-
-@property --blue-s {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: 35%;
-}
-
 header {
   text-align: center;
   margin-bottom: 2.75rem;
@@ -127,29 +92,47 @@ header {
   position: relative;
   cursor: pointer;
   background-color: #ffffff;
-
-  background-image:
-    radial-gradient(circle at var(--pink-x) var(--pink-y), rgba(255, 184, 242, 0.9) 0%, rgba(255, 184, 242, 0) var(--pink-s)),
-    radial-gradient(circle at var(--blue-x) var(--blue-y), rgba(140, 120, 255, 0.62) 0%, rgba(96, 80, 255, 0) var(--blue-s));
-
   -webkit-mask-image: url('assets/logo_base.webp');
   -webkit-mask-size: contain;
   -webkit-mask-position: center;
   -webkit-mask-repeat: no-repeat;
-
   mask-image: url('assets/logo_base.webp');
   mask-size: contain;
   mask-position: center;
   mask-repeat: no-repeat;
-
-  animation: breatheHues 8s infinite ease-in-out alternate;
+  overflow: hidden;
 }
 
-.logo::before {
-  content: "";
+.logo-pink, .logo-blue {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.logo-pink {
+  width: 250%;
+  height: 250%;
+  top: -75%;
+  left: -75%;
+  background-image: radial-gradient(circle at center, rgba(255, 184, 242, 0.9) 0%, rgba(255, 184, 242, 0) 35%);
+  animation: movePink 13s infinite ease-in-out alternate;
+}
+
+.logo-blue {
+  width: 250%;
+  height: 250%;
+  top: -75%;
+  left: -75%;
+  background-image: radial-gradient(circle at center, rgba(140, 120, 255, 0.62) 0%, rgba(96, 80, 255, 0) 45%);
+  animation: moveBlue 17s infinite ease-in-out alternate;
+}
+
+.logo-noise {
   position: absolute;
   inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  background-image: url('assets/logo_noise.png');
+  background-repeat: repeat;
   opacity: 0.15;
   mix-blend-mode: multiply;
   pointer-events: none;
@@ -161,33 +144,18 @@ header {
   border-radius: 4px;
 }
 
-@keyframes breatheHues {
-  0% {
-    --pink-x: 82%;
-    --pink-y: 22%;
-    --pink-s: 22%;
-    --blue-x: 18%;
-    --blue-y: 78%;
-    --blue-s: 32%;
-  }
+@keyframes movePink {
+  0% { transform: translate(18%, -15%) scale(0.85); }
+  33% { transform: translate(0%, 8%) scale(1.15); }
+  66% { transform: translate(-12%, -10%) scale(0.95); }
+  100% { transform: translate(15%, 12%) scale(1.08); }
+}
 
-  50% {
-    --pink-x: 60%;
-    --pink-y: 48%;
-    --pink-s: 28%;
-    --blue-x: 40%;
-    --blue-y: 52%;
-    --blue-s: 40%;
-  }
-
-  100% {
-    --pink-x: 78%;
-    --pink-y: 28%;
-    --pink-s: 24%;
-    --blue-x: 22%;
-    --blue-y: 72%;
-    --blue-s: 36%;
-  }
+@keyframes moveBlue {
+  0% { transform: translate(-18%, 15%) scale(0.9); }
+  33% { transform: translate(5%, -8%) scale(1.2); }
+  66% { transform: translate(12%, 10%) scale(0.95); }
+  100% { transform: translate(-15%, -12%) scale(1.12); }
 }
 
 header p {
@@ -205,7 +173,7 @@ header p {
 .search-input {
   width: 100%;
   padding: 0.9rem 1.2rem;
-  background: var(--surface);
+  background: url('assets/noise_bg.png'), var(--surface);
   border: 1px solid var(--border2);
   border-radius: var(--radius-md);
   color: var(--text);
@@ -422,7 +390,7 @@ header p {
 }
 
 .result-item {
-  background: var(--surface);
+  background: url('assets/noise_bg.png'), var(--surface);
   border: 1px solid var(--border2);
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -439,7 +407,7 @@ header p {
 .result-item:hover,
 .result-item:active,
 .result-item.active {
-  background: var(--surface2);
+  background: url('assets/noise_bg.png'), var(--surface2);
   border-color: var(--accent);
   box-shadow: 0 8px 24px #00000040;
 }
@@ -483,7 +451,7 @@ header p {
   width: 100%;
   max-width: 100%;
   margin: var(--gap) auto 0;
-  background: var(--surface);
+  background: url('assets/noise_bg.png'), var(--surface);
   border: 1px solid var(--border2);
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -1214,7 +1182,7 @@ header p {
   display: flex;
   align-items: center;
   padding: 12px 16px;
-  background: rgba(255,255,255,0.03);
+  background: url('assets/noise_bg.png'), rgba(255,255,255,0.03);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -1224,7 +1192,7 @@ header p {
 }
 
 .stash-item-item:hover, .stash-item-item:active {
-  background: rgba(255,255,255,0.07);
+  background: url('assets/noise_bg.png'), rgba(255,255,255,0.07);
   border-color: var(--border2);
 }
 

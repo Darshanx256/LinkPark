@@ -46,6 +46,8 @@ const logoEl = document.querySelector('.logo');
 const resultsGridEl = document.getElementById('resultsGrid');
 const stashSectionEl = document.getElementById('stashSection');
 const stashGridEl = document.getElementById('stashGrid');
+const recentSectionEl = document.getElementById('recentSection');
+const recentGridEl = document.getElementById('recentGrid');
 const wrapEl = document.querySelector('.wrap');
 const FALLBACK_ART = 'assets/no-album-art.svg';
 
@@ -196,18 +198,18 @@ function crossfadeTo(src, nextIndex) {
   updatePlayersUI(); // Trigger UI update to show next song as playing
   
   const fadeTime = 3000;
-  const steps = 30;
-  const interval = fadeTime / steps;
-  let step = 0;
+  let startTime = null;
   
-  const fader = setInterval(() => {
-    step++;
-    const p = step / steps;
+  function fader(timestamp) {
+    if (!startTime) startTime = timestamp;
+    const p = Math.min((timestamp - startTime) / fadeTime, 1);
+    
     audio.volume = 1 - p;
     secondaryAudio.volume = p;
     
-    if (step >= steps) {
-      clearInterval(fader);
+    if (p < 1) {
+      requestAnimationFrame(fader);
+    } else {
       audio.pause();
       audio.volume = 1;
       
@@ -220,7 +222,8 @@ function crossfadeTo(src, nextIndex) {
       isFading = false;
       updatePlayersUI();
     }
-  }, interval);
+  }
+  requestAnimationFrame(fader);
 }
 
 audio1.addEventListener('timeupdate', checkCrossfade);
@@ -241,8 +244,73 @@ function checkCrossfade() {
   }
 }
 
-document.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
-document.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
+// Event Delegation for all clicks (play, seek, grid items)
+document.body.addEventListener('click', e => {
+  const playBtn = e.target.closest('.play-btn');
+  if (playBtn) {
+    e.stopPropagation();
+    if (playBtn.classList.contains('rect-play-btn')) {
+      const itemEl = playBtn.closest('.stash-item-item');
+      if (itemEl && window.currentStashFull) {
+        modalPlaylist = window.currentStashFull;
+        modalIndex = Array.from(document.getElementById('stashFullList').children).indexOf(itemEl);
+      }
+    }
+    handlePlayClick({ stopPropagation: () => {}, currentTarget: playBtn });
+    return;
+  }
+
+  const seekWrap = e.target.closest('.seek-wrap');
+  if (seekWrap) {
+    e.stopPropagation();
+    handleSeekClick({
+      clientX: e.clientX,
+      stopPropagation: () => {},
+      currentTarget: seekWrap
+    });
+    return;
+  }
+
+  const resultItem = e.target.closest('.result-item');
+  if (resultItem && !e.target.closest('.player-wrap')) {
+    const grid = resultItem.closest('#stashGrid, #resultsGrid');
+    if (grid) {
+      const i = Number(resultItem.dataset.i);
+      if (grid.id === 'stashGrid' && window.currentStash20) {
+        const it = window.currentStash20[i];
+        if (it) {
+          if (!it.l || Object.keys(it.l).length === 0) resolve({ title: it.t || it.title, artist: it.a || it.artist, art: it.art, previewUrl: it.preview });
+          else resolve(it);
+        }
+      } else if (grid.id === 'resultsGrid' && window.currentResults) {
+        const it = window.currentResults[i];
+        if (it) pickResult(it, resultItem);
+      }
+    }
+    return;
+  }
+
+  const stashItem = e.target.closest('.stash-item-item');
+  if (stashItem && window.currentStashFull) {
+    const saveBtn = e.target.closest('.rect-save-btn');
+    const i = Array.from(document.getElementById('stashFullList').children).indexOf(stashItem);
+    const it = window.currentStashFull[i];
+    if (!it) return;
+
+    if (saveBtn) {
+      e.stopPropagation();
+      toggleSaved(it, renderSaved);
+      renderStash();
+      return;
+    }
+
+    if (!e.target.closest('.rect-actions')) {
+      closeStashModal();
+      if (!it.l || Object.keys(it.l).length === 0) resolve({ title: it.t || it.title, artist: it.a || it.artist, art: normalizeArtworkUrl(it.art), previewUrl: it.preview });
+      else resolve(it);
+    }
+  }
+});
 
 document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => {
   if (!currentData) return;
@@ -437,6 +505,7 @@ function renderSaved() {
   
   if (!saved.length || !isHome) {
     stashSectionEl.style.display = 'none';
+    if (recentSectionEl) recentSectionEl.style.display = 'none';
   } else {
     stashSectionEl.style.display = 'flex';
     const top20 = saved.slice(0, 20);
@@ -469,21 +538,8 @@ function renderSaved() {
     stashGridEl.innerHTML = html;
     stashGridEl.classList.toggle('has-mask', saved.length > 5);
 
-    stashGridEl.querySelectorAll('.result-item').forEach((el, i) => {
-      el.addEventListener('click', (e) => {
-        if (e.target.closest('.player-wrap')) return;
-        const it = top20[i];
-        if (!it.l || Object.keys(it.l).length === 0) {
-          resolve({ title: it.t || it.title, artist: it.a || it.artist, art: it.art, previewUrl: it.preview });
-        } else {
-          resolve(it);
-        }
-      });
-    });
-
+    window.currentStash20 = top20;
     document.getElementById('viewAllStash')?.addEventListener('click', openStashModal);
-    stashGridEl.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
-    stashGridEl.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
     stashGridEl.querySelectorAll('.card-title').forEach(setupMarquee);
   }
 
@@ -545,28 +601,7 @@ function renderStash() {
     </div>
   `).join('');
 
-  stashFullList.querySelectorAll('.stash-item-item').forEach((el, i) => {
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('.rect-actions')) return;
-      closeStashModal();
-      const it = saved[i];
-      if (!it.l || Object.keys(it.l).length === 0) {
-        resolve({ title: it.t || it.title, artist: it.a || it.artist, art: normalizeArtworkUrl(it.art), previewUrl: it.preview });
-      } else {
-        resolve(it);
-      }
-    });
-    el.querySelector('.rect-save-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleSaved(saved[i], renderSaved);
-      renderStash();
-    });
-    el.querySelector('.rect-play-btn').addEventListener('click', (e) => {
-      modalPlaylist = saved;
-      modalIndex = i;
-      handlePlayClick(e);
-    });
-  });
+  window.currentStashFull = saved;
   updatePlayersUI();
 }
 
@@ -580,6 +615,7 @@ const marqueeObserver = new IntersectionObserver(entries => {
       
       // Delay slightly to allow transition animations to finish
       setTimeout(() => {
+        if (!document.body.contains(el)) return; // Prevent race conditions
         const visibleWidth = wrap.clientWidth;
         const totalWidth = el.scrollWidth;
         
@@ -605,6 +641,7 @@ function setupMarquee(el) {
 async function search(q) {
   try {
     stashSectionEl.style.display = 'none';
+    if (recentSectionEl) recentSectionEl.style.display = 'none';
     renderResultsGrid([], true); 
     const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=10&country=${COUNTRY}`);
     const d = await r.json();
@@ -626,6 +663,7 @@ function renderResultsGrid(tracks, isSkeleton = false) {
   cardEl.style.display = 'none';
   lastResolvedKey = null;
   stashSectionEl.style.display = 'none';
+  if (recentSectionEl) recentSectionEl.style.display = 'none';
   setWide(false);
   resultsGridEl.style.display = 'flex';
   
@@ -681,15 +719,7 @@ function renderResultsGrid(tracks, isSkeleton = false) {
     </div>
   `; }).join('');
 
-  resultsGridEl.querySelectorAll('.result-item').forEach((el, i) => {
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('.player-wrap')) return;
-      pickResult(tracksItems[i], el);
-    });
-  });
-
-  resultsGridEl.querySelectorAll('.play-btn').forEach(btn => btn.addEventListener('click', handlePlayClick));
-  resultsGridEl.querySelectorAll('.seek-wrap').forEach(btn => btn.addEventListener('click', handleSeekClick));
+  window.currentResults = tracksItems;
   resultsGridEl.querySelectorAll('.card-title').forEach(setupMarquee);
   updatePlayersUI();
   
@@ -795,6 +825,7 @@ let lastResolvedKey = null;
 
 async function resolve(data, shouldSave = true) {
   stashSectionEl.style.display = 'none';
+  if (recentSectionEl) recentSectionEl.style.display = 'none';
   const t = data.t || data.title || '';
   const a = data.a || data.artist || '';
   const currentKey = typeof data === 'string' ? data.trim() : (data ? `${t}|${a}` : '');
@@ -1063,6 +1094,7 @@ function setLoad(on) {
   if (on && cardEl.style.display !== 'block' && resultsGridEl.style.display !== 'flex') {
     loaderEl.style.display = 'block';
     stashSectionEl.style.display = 'none';
+    if (recentSectionEl) recentSectionEl.style.display = 'none';
   }
   else loaderEl.style.display = 'none';
   if (on) errEl.style.display = 'none';
@@ -1074,6 +1106,7 @@ function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&
 
 let phIdx = 1;
 setInterval(() => {
+  if (document.hidden) return; // Prevent CPU wakeups
   if (document.activeElement !== qEl && qEl.value === '') {
     qEl.classList.add('ph-fade');
     setTimeout(() => {
@@ -1176,26 +1209,24 @@ function _clearRecent() {
 }
 
 function renderRecent() {
-  const section = document.getElementById('recentSection');
-  const grid = document.getElementById('recentGrid');
   const clearBtn = document.getElementById('clearRecent');
-  if (!section || !grid) return;
+  if (!recentSectionEl || !recentGridEl) return;
 
   const isHome = resultsGridEl.style.display !== 'flex' && cardEl.style.display !== 'block';
   const recent = getRecent();
 
   if (!recent.length || !isHome) {
-    section.style.display = 'none';
-    grid.innerHTML = '';
+    recentSectionEl.style.display = 'none';
+    recentGridEl.innerHTML = '';
     return;
   }
 
-  section.style.display = 'flex';
-  grid.innerHTML = recent.map((it, i) => `
+  recentSectionEl.style.display = 'flex';
+  recentGridEl.innerHTML = recent.map((it, i) => `
     <button class="recent-chip" type="button" data-i="${i}" title="${esc(it.text)}">${esc(it.text)}</button>
   `).join('');
 
-  grid.querySelectorAll('.recent-chip').forEach(btn => {
+  recentGridEl.querySelectorAll('.recent-chip').forEach(btn => {
     btn.addEventListener('click', () => {
       const it = recent[Number(btn.dataset.i)];
       if (!it) return;
