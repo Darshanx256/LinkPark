@@ -78,7 +78,6 @@ const audio1 = new Audio();
 const audio2 = new Audio();
 let audio = audio1; // Primary pointer
 let secondaryAudio = audio2;
-let isPlaying = false;
 let isFading = false;
 
 let currentPlaybackContext = [];
@@ -88,13 +87,13 @@ let stashIdx = -1; // For keyboard navigation in modal
 let playingKey = null;
 let fadingKey = null;
 
-audio1.addEventListener('play', () => { isPlaying = true; updatePlayersUI(); });
-audio1.addEventListener('pause', () => { if (audio === audio1) isPlaying = false; updatePlayersUI(); });
-audio1.addEventListener('ended', () => { if (audio === audio1) isPlaying = false; updatePlayersUI(); });
+audio1.addEventListener('play', updatePlayersUI);
+audio1.addEventListener('pause', updatePlayersUI);
+audio1.addEventListener('ended', updatePlayersUI);
 
-audio2.addEventListener('play', () => { isPlaying = true; updatePlayersUI(); });
-audio2.addEventListener('pause', () => { if (audio === audio2) isPlaying = false; updatePlayersUI(); });
-audio2.addEventListener('ended', () => { if (audio === audio2) isPlaying = false; updatePlayersUI(); });
+audio2.addEventListener('play', updatePlayersUI);
+audio2.addEventListener('pause', updatePlayersUI);
+audio2.addEventListener('ended', updatePlayersUI);
 
 let lastTimeUpdate = 0;
 audio1.addEventListener('timeupdate', (e) => {
@@ -130,7 +129,7 @@ function updatePlayersUI() {
       const timeLabel = wrap.querySelector('.time-label');
 
       if (playBtn) {
-        const effectivePlaying = (isCurrent && isPlaying && !isFading) || (isNext && isFading && !secondaryAudio.paused);
+        const effectivePlaying = (isCurrent && !audio.paused && !isFading) || (isNext && isFading && !secondaryAudio.paused);
         if (effectivePlaying) {
           playBtn.classList.add('playing');
           playBtn.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
@@ -170,9 +169,21 @@ function handlePlayClick(e) {
   if (!src || !itemKey) return;
 
   if (itemKey === playingKey) {
-    if (isPlaying) audio.pause(); else audio.play();
+    if (!audio.paused) {
+      audio.pause();
+      if (isFading) secondaryAudio.pause();
+    } else {
+      audio.play();
+      if (isFading) secondaryAudio.play();
+    }
   } else if (itemKey === fadingKey) {
-    if (secondaryAudio.paused) secondaryAudio.play(); else secondaryAudio.pause();
+    if (secondaryAudio.paused) {
+      secondaryAudio.play();
+      audio.play();
+    } else {
+      secondaryAudio.pause();
+      audio.pause();
+    }
   } else {
     if (isFading) {
        secondaryAudio.pause();
@@ -756,7 +767,13 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Space' && document.activeElement !== qEl) {
     e.preventDefault();
     if (audio.src) {
-      if (isPlaying) audio.pause(); else audio.play();
+      if (!audio.paused) {
+        audio.pause();
+        if (isFading) secondaryAudio.pause();
+      } else {
+        audio.play();
+        if (isFading) secondaryAudio.play();
+      }
     }
     return;
   }
@@ -1011,12 +1028,17 @@ function populateUI(title, artist, art, preview, links) {
     const currentSrc = normalizeUrl(audio.src);
 
     if (currentSrc !== nextSrc) {
-       const wasPlaying = isPlaying;
+       const wasPlaying = !audio.paused || (isFading && !secondaryAudio.paused);
+       if (isFading) {
+         secondaryAudio.pause();
+         isFading = false;
+         fadingKey = null;
+       }
        audio.pause();
        audio.src = preview; 
        audio.load(); 
        if (wasPlaying) audio.play();
-    } else if (isPlaying && audio.paused) {
+    } else if (audio.paused) {
        // Same source, user wants it playing, but it's paused for some reason.
        audio.play();
     }
@@ -1195,7 +1217,13 @@ document.addEventListener('keydown', (e) => {
       break;
     case ' ': // Play/Pause
       e.preventDefault();
-      if (isPlaying) audio.pause(); else audio.play();
+      if (!audio.paused) {
+        audio.pause();
+        if (isFading) secondaryAudio.pause();
+      } else {
+        audio.play();
+        if (isFading) secondaryAudio.play();
+      }
       break;
     case '/': // Focus Search
       e.preventDefault();
