@@ -130,7 +130,7 @@ function updatePlayersUI() {
       const timeLabel = wrap.querySelector('.time-label');
 
       if (playBtn) {
-        const effectivePlaying = (isCurrent && isPlaying) || (isNext && isFading && !secondaryAudio.paused);
+        const effectivePlaying = (isCurrent && isPlaying && !isFading) || (isNext && isFading && !secondaryAudio.paused);
         if (effectivePlaying) {
           playBtn.classList.add('playing');
           playBtn.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
@@ -229,12 +229,12 @@ function crossfadeTo(src, nextIndex, nextKey) {
       fadingKey = null;
       updatePlayersUI();
     } else {
-      audio.pause();
-      audio.volume = 1;
-      
-      const temp = audio;
+      const oldAudio = audio;
       audio = secondaryAudio;
-      secondaryAudio = temp;
+      secondaryAudio = oldAudio;
+      
+      oldAudio.pause();
+      oldAudio.volume = 1;
       
       modalIndex = nextIndex;
       playingKey = fadingKey;
