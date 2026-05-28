@@ -52,7 +52,7 @@ Perfect for testing things out on your machine without setting up a server.
   - Leave `PROXY = ''` in `index.html`.
   - Open `index.html` in your browser. (Note: Search might fail in some browsers due to CORS if run directly from a file).
 
-👉 **[Live Demo: LinkPark](https://darshanx256.github.io/LinkPark/)**
+👉 **[Live Demo: LinkPark](https://linkpark.my.to)**
 
 ### What it uses under the hood
 
