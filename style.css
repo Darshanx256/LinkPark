@@ -753,7 +753,7 @@ header p {
   width: 14px;
   height: 14px;
   fill: currentColor;
-  margin-left: 2px;
+  margin-left: 1px;
 }
 
 .play-btn.playing svg {
@@ -1279,6 +1279,10 @@ header p {
   gap: 8px;
 }
 
+.rect-actions.player-wrap {
+  margin-top: 0;
+}
+
 .rect-play-btn {
   background: rgba(255,255,255,0.08) !important;
   border: 1px solid var(--border2) !important;
@@ -1294,7 +1298,6 @@ header p {
 .rect-play-btn:hover, .rect-play-btn:active {
   background: var(--accent) !important;
   border-color: var(--accent) !important;
-  transform: scale(1.1);
 }
 
 .rect-play-btn svg {

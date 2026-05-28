@@ -119,13 +119,19 @@ export function getRecent() {
   catch (e) { return []; }
 }
 
-export function updateRecentSearch(val) {
+export function updateRecentSearch(val, queryToRemove = '') {
   if (!val) return;
   let text = typeof val === 'string' ? val : `${val.t || val.title} — ${val.a || val.artist}`;
   let data = typeof val === 'object' ? val : null;
 
   let recent = getRecent();
-  recent = recent.filter(r => r.text !== text);
+  recent = recent.filter(r => {
+    const rText = (r.text || '').toLowerCase();
+    if (rText === text.toLowerCase()) return false;
+    if (data && queryToRemove && rText === queryToRemove.toLowerCase()) return false;
+    return true;
+  });
+  
   recent.unshift({ text, data });
   localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, 5)));
 }

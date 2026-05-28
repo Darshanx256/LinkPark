@@ -81,9 +81,12 @@ let secondaryAudio = audio2;
 let isPlaying = false;
 let isFading = false;
 
-let modalPlaylist = [];
+let currentPlaybackContext = [];
 let modalIndex = -1;
 let stashIdx = -1; // For keyboard navigation in modal
+
+let playingKey = null;
+let fadingKey = null;
 
 audio1.addEventListener('play', () => { isPlaying = true; updatePlayersUI(); });
 audio1.addEventListener('pause', () => { if (audio === audio1) isPlaying = false; updatePlayersUI(); });
@@ -112,15 +115,14 @@ audio2.addEventListener('timeupdate', (e) => {
 function updatePlayersUI() {
   const p = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
   const time = formatTime(audio.currentTime);
-  const currentSrc = normalizeUrl(audio.src);
-  const secondarySrc = isFading ? normalizeUrl(secondaryAudio.src) : null;
 
   document.querySelectorAll('.player-wrap').forEach(wrap => {
-    const item = wrap.closest('[data-preview]') || wrap.closest('.card');
-    const itemSrc = normalizeUrl(item?.dataset?.preview || (item?.id === 'card' ? audio.src : ''));
-    
-    const isCurrent = itemSrc && itemSrc === currentSrc;
-    const isNext = itemSrc && itemSrc === secondarySrc;
+    const item = wrap.closest('[data-key]') || wrap.closest('.card');
+    let itemKey = item?.dataset?.key;
+    if (item?.id === 'card' && currentData) itemKey = savedKey(currentData);
+
+    const isCurrent = itemKey && itemKey === playingKey;
+    const isNext = itemKey && itemKey === fadingKey;
 
     if (isCurrent || isNext) {
       const playBtn = wrap.querySelector('.play-btn');
@@ -128,8 +130,7 @@ function updatePlayersUI() {
       const timeLabel = wrap.querySelector('.time-label');
 
       if (playBtn) {
-        // If it's the next song fading in, it's effectively "playing"
-        const effectivePlaying = isPlaying || (isNext && isFading);
+        const effectivePlaying = (isCurrent && isPlaying) || (isNext && isFading && !secondaryAudio.paused);
         if (effectivePlaying) {
           playBtn.classList.add('playing');
           playBtn.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
@@ -161,14 +162,24 @@ function handlePlayClick(e) {
   e.stopPropagation();
   const btn = e.currentTarget;
   const wrap = btn.closest('.player-wrap');
-  const item = wrap.closest('[data-preview]') || wrap.closest('.card');
-  const src = item?.dataset?.preview || (item?.id === 'card' ? audio.src : '');
+  const item = wrap.closest('[data-key]') || wrap.closest('.card');
+  let itemKey = item?.dataset?.key;
+  if (item?.id === 'card' && currentData) itemKey = savedKey(currentData);
+  const src = item?.dataset?.preview || (item?.id === 'card' ? currentData?.preview : '');
 
-  if (!src) return;
+  if (!src || !itemKey) return;
 
-  if (normalizeUrl(audio.src) === normalizeUrl(src)) {
+  if (itemKey === playingKey) {
     if (isPlaying) audio.pause(); else audio.play();
+  } else if (itemKey === fadingKey) {
+    if (secondaryAudio.paused) secondaryAudio.play(); else secondaryAudio.pause();
   } else {
+    if (isFading) {
+       secondaryAudio.pause();
+       isFading = false;
+       fadingKey = null;
+    }
+    playingKey = itemKey;
     audio.src = src;
     audio.play();
   }
@@ -179,23 +190,25 @@ function handleSeekClick(e) {
   if (!audio.duration || isFading) return;
   const rect = e.currentTarget.getBoundingClientRect();
   const wrap = e.currentTarget.closest('.player-wrap');
-  const item = wrap.closest('[data-preview]') || wrap.closest('.card');
-  const src = item?.dataset?.preview || (item?.id === 'card' ? audio.src : '');
+  const item = wrap.closest('[data-key]') || wrap.closest('.card');
+  let itemKey = item?.dataset?.key;
+  if (item?.id === 'card' && currentData) itemKey = savedKey(currentData);
 
-  if (normalizeUrl(audio.src) !== normalizeUrl(src)) return;
+  if (itemKey !== playingKey) return;
 
   const p = (e.clientX - rect.left) / rect.width;
   audio.currentTime = p * audio.duration;
 }
 
-function crossfadeTo(src, nextIndex) {
+function crossfadeTo(src, nextIndex, nextKey) {
   if (isFading) return;
   isFading = true;
+  fadingKey = nextKey;
   
   secondaryAudio.src = src;
   secondaryAudio.volume = 0;
   secondaryAudio.play();
-  updatePlayersUI(); // Trigger UI update to show next song as playing
+  updatePlayersUI();
   
   const fadeTime = 3000;
   let startTime = null;
@@ -207,19 +220,26 @@ function crossfadeTo(src, nextIndex) {
     audio.volume = 1 - p;
     secondaryAudio.volume = p;
     
-    if (p < 1) {
+    if (p < 1 && !secondaryAudio.paused) {
       requestAnimationFrame(fader);
+    } else if (secondaryAudio.paused) {
+      audio.pause();
+      audio.volume = 1;
+      isFading = false;
+      fadingKey = null;
+      updatePlayersUI();
     } else {
       audio.pause();
       audio.volume = 1;
       
-      // Swap pointers
       const temp = audio;
       audio = secondaryAudio;
       secondaryAudio = temp;
       
       modalIndex = nextIndex;
+      playingKey = fadingKey;
       isFading = false;
+      fadingKey = null;
       updatePlayersUI();
     }
   }
@@ -231,14 +251,14 @@ audio2.addEventListener('timeupdate', checkCrossfade);
 
 function checkCrossfade() {
   const currentAudio = this;
-  if (currentAudio !== audio || isFading || modalIndex === -1) return;
+  if (currentAudio !== audio || isFading || modalIndex === -1 || !currentPlaybackContext.length) return;
   
   if (currentAudio.duration && currentAudio.duration - currentAudio.currentTime <= 3) {
-    if (modalIndex < modalPlaylist.length - 1) {
+    if (modalIndex < currentPlaybackContext.length - 1) {
       const nextIdx = modalIndex + 1;
-      const nextItem = modalPlaylist[nextIdx];
-      if (nextItem.preview) {
-        crossfadeTo(nextItem.preview, nextIdx);
+      const nextItem = currentPlaybackContext[nextIdx];
+      if (nextItem.preview || nextItem.previewUrl) {
+        crossfadeTo(nextItem.preview || nextItem.previewUrl, nextIdx, savedKey(nextItem));
       }
     }
   }
@@ -249,11 +269,18 @@ document.body.addEventListener('click', e => {
   const playBtn = e.target.closest('.play-btn');
   if (playBtn) {
     e.stopPropagation();
-    if (playBtn.classList.contains('rect-play-btn')) {
-      const itemEl = playBtn.closest('.stash-item-item');
-      if (itemEl && window.currentStashFull) {
-        modalPlaylist = window.currentStashFull;
+    const itemEl = playBtn.closest('.stash-item-item, .result-item');
+    let itemKey = itemEl?.dataset?.key;
+    if (itemEl && itemKey !== playingKey && itemKey !== fadingKey) {
+      if (itemEl.classList.contains('stash-item-item') && window.currentStashFull) {
+        currentPlaybackContext = [...window.currentStashFull];
         modalIndex = Array.from(document.getElementById('stashFullList').children).indexOf(itemEl);
+      } else if (itemEl.closest('#stashGrid') && window.currentStash20) {
+        currentPlaybackContext = [...window.currentStash20];
+        modalIndex = Array.from(document.getElementById('stashGrid').querySelectorAll('.result-item')).indexOf(itemEl);
+      } else if (itemEl.closest('#resultsGrid') && window.currentResults) {
+        currentPlaybackContext = [...window.currentResults];
+        modalIndex = Array.from(document.getElementById('resultsGrid').querySelectorAll('.result-item')).indexOf(itemEl);
       }
     }
     handlePlayClick({ stopPropagation: () => {}, currentTarget: playBtn });
@@ -510,7 +537,7 @@ function renderSaved() {
     stashSectionEl.style.display = 'flex';
     const top20 = saved.slice(0, 20);
     let html = top20.map((it, i) => `
-      <div class="result-item" data-i="${i}" data-preview="${it.preview || ''}" tabindex="0">
+      <div class="result-item" data-i="${i}" data-preview="${it.preview || ''}" data-key="${savedKey(it).replace(/"/g, '&quot;')}" tabindex="0">
         <div class="card-meta">
           <img class="card-art" src="${normalizeArtworkUrl(it.art) || FALLBACK_ART}" onerror="this.onerror=null;this.src='${FALLBACK_ART}';" loading="lazy" alt="${esc(it.t || it.title)} artwork">
           <div class="card-info">
@@ -584,7 +611,7 @@ function renderStash() {
   else saved.sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
   stashFullList.innerHTML = saved.map((it, i) => `
-    <div class="stash-item-item" data-preview="${it.preview || ''}">
+    <div class="stash-item-item" data-preview="${it.preview || ''}" data-key="${savedKey(it).replace(/"/g, '&quot;')}">
       <img src="${normalizeArtworkUrl(it.art) || FALLBACK_ART}" onerror="this.onerror=null;this.src='${FALLBACK_ART}';" alt="${esc(it.t || it.title)} artwork">
       <div class="stash-item-info">
         <div class="stash-item-title">${esc(it.t || it.title)}</div>
@@ -697,7 +724,7 @@ function renderResultsGrid(tracks, isSkeleton = false) {
 
   resultsGridEl.innerHTML = tracksItems.map((it, i) => {
     return `
-    <div class="result-item" data-i="${i}" data-preview="${it.previewUrl || ''}" tabindex="0">
+    <div class="result-item" data-i="${i}" data-preview="${it.previewUrl || ''}" data-key="${savedKey(it).replace(/"/g, '&quot;')}" tabindex="0">
       <div class="card-meta">
         <img class="card-art" src="${it.art}" loading="lazy" alt="${esc(it.title)} album art">
         <div class="card-info">
@@ -809,7 +836,7 @@ async function pickResult(it, el) {
         targetMeta.classList.remove('flipping');
         linksEl.style.transition = 'opacity 0.5s ease';
         linksEl.style.opacity = '1';
-        _updateRecentSearch(it.title); // Save search text if it was a direct pick? No, the user said "just text, not tracks".
+        _updateRecentSearch(it, document.getElementById('q').value);
         resolve(it, false);
       }, 500);
     });
@@ -917,7 +944,7 @@ async function resolve(data, shouldSave = true) {
     populateUI(finalT, finalA, finalArt, finalPreview, res.links);
     currentData = { t: finalT, a: finalA, art: finalArt, preview: finalPreview, itunesId, l: res.links };
     
-    if (shouldSave) _updateRecentSearch(currentData);
+    if (shouldSave) _updateRecentSearch(currentData, document.getElementById('q').value);
     syncSavedTrackData(currentData, renderSaved);
 
   } catch (e) {
@@ -1198,8 +1225,8 @@ function updateStashSelection() {
   if (stashIdx !== -1) items[stashIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
-function _updateRecentSearch(val) {
-  updateRecentSearch(val);
+function _updateRecentSearch(val, queryToRemove = '') {
+  updateRecentSearch(val, queryToRemove);
   renderRecent();
 }
 
