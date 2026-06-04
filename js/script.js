@@ -1038,9 +1038,6 @@ function populateUI(title, artist, art, preview, links) {
        audio.src = preview; 
        audio.load(); 
        if (wasPlaying) audio.play();
-    } else if (audio.paused) {
-       // Same source, user wants it playing, but it's paused for some reason.
-       audio.play();
     }
     updatePlayersUI();
   } else {
