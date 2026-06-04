@@ -231,6 +231,10 @@ async function resolveOdesli(url, country = 'US') {
   const cached = cacheGet(cacheKey);
   if (cached) return JSON.parse(cached);
 
+  if (USE_TINYFISH_SIMULATOR) {
+    return simulateOdesliResolve(targetUrl, country);
+  }
+
   const target = `${ODESLI}?url=${encodeURIComponent(targetUrl)}&userCountry=${country}`;
 
   const proxies = [
@@ -359,10 +363,67 @@ async function simulateTinyfishSearch(query) {
   return data;
 }
 
+function simulateOdesliResolve(url, country) {
+  if (url.includes('1191715423') || url.toLowerCase().includes('shape-of-you')) {
+    const data = {
+      entityUniqueId: 'APPLE_MUSIC_SONG::1191715424',
+      entitiesByUniqueId: {
+        'APPLE_MUSIC_SONG::1191715424': {
+          id: '1191715424',
+          title: 'Shape of You',
+          artistName: 'Ed Sheeran',
+          thumbnailUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music111/v4/71/61/8c/71618c7c-473d-9f4a-9f5b-1c5aef83626e/602557342622.jpg/600x600bb.jpg'
+        }
+      },
+      linksByPlatform: {
+        appleMusic: {
+          url: `https://music.apple.com/${country.toLowerCase()}/album/shape-of-you/1191715423?i=1191715424`
+        },
+        spotify: {
+          url: 'https://open.spotify.com/track/7qiZjo2v6t52G45qjXODhb'
+        },
+        youtubeMusic: {
+          url: 'https://music.youtube.com/watch?v=JGwWNGJdvx8'
+        }
+      }
+    };
+    return data;
+  }
+  return null;
+}
+
+function simulateItunesResolve(query, country) {
+  if (query.toLowerCase().includes('shape-of-you') || query.includes('1191715423')) {
+    return {
+      results: [
+        {
+          wrapperType: 'track',
+          kind: 'song',
+          artistId: 2627344,
+          collectionId: 1191715423,
+          trackId: 1191715424,
+          artistName: 'Ed Sheeran',
+          collectionName: '÷ (Deluxe)',
+          trackName: 'Shape of You',
+          trackViewUrl: `https://music.apple.com/${country.toLowerCase()}/album/shape-of-you/1191715423?i=1191715424&uo=4`,
+          previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/31/53/78/315378c8-6927-4632-4113-10e5f276cd8d/m4a.aud.up.epub.m4a',
+          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/Music111/v4/71/61/8c/71618c7c-473d-9f4a-9f5b-1c5aef83626e/602557342622.jpg/100x100bb.jpg'
+        }
+      ]
+    };
+  }
+  return { results: [] };
+}
+
+
 async function resolveItunes(query, country = 'US') {
   const cacheKey = `it:${query}:${country}`;
   const cached = cacheGet(cacheKey);
   if (cached) return JSON.parse(cached);
+
+  if (USE_TINYFISH_SIMULATOR) {
+    return simulateItunesResolve(query, country);
+  }
 
   return dedup.dedupe(cacheKey, async () => {
     try {

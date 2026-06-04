@@ -207,8 +207,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   const isUrlDrop = u && !query;
 
   if (u) {
-    u = u.trim().replace('music.youtube.com', 'youtube.com');
-    if (u.includes('youtube.com/shorts/')) u = u.replace('youtube.com/shorts/', 'youtube.com/watch?v=');
+    u = db.normalizeMusicUrl(u);
   }
 
   const lookupKey = u || query;
@@ -258,8 +257,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
     if (responseData.links) {
       Object.values(responseData.links).forEach(link => {
         if (typeof link !== 'string') return;
-        let norm = link.trim().replace('music.youtube.com', 'youtube.com');
-        if (norm.includes('youtube.com/shorts/')) norm = norm.replace('youtube.com/shorts/', 'youtube.com/watch?v=');
+        const norm = db.normalizeMusicUrl(link);
         const linkKey = `res:${norm}:::`;
         resolver.cacheSet(linkKey, responseString);
       });

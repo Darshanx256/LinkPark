@@ -230,13 +230,66 @@ function generateShortId() {
   return crypto.randomBytes(4).toString('hex'); // 8 character alphanumeric string
 }
 
+function normalizeMusicUrl(urlStr) {
+  if (!urlStr || typeof urlStr !== 'string') return urlStr;
+  
+  let val = urlStr.trim();
+  if (!val.startsWith('http://') && !val.startsWith('https://') && !val.startsWith('spotify:')) {
+    return val;
+  }
+  
+  try {
+    val = val.replace('music.youtube.com', 'youtube.com');
+    if (val.includes('youtube.com/shorts/')) {
+      val = val.replace('youtube.com/shorts/', 'youtube.com/watch?v=');
+    }
+    
+    const u = new URL(val);
+    const host = u.hostname.toLowerCase();
+    
+    if (host.includes('apple.com')) {
+      u.hostname = 'music.apple.com';
+      const parts = u.pathname.split('/');
+      if (parts.length > 1) {
+        const segment = parts[1];
+        if (/^[a-z]{2}(-[a-z]{2,4})?$/i.test(segment)) {
+          parts.splice(1, 1);
+          u.pathname = parts.join('/');
+        }
+      }
+      const trackId = u.searchParams.get('i');
+      u.search = '';
+      if (trackId) {
+        u.searchParams.set('i', trackId);
+      }
+    } else if (host.includes('spotify.com')) {
+      u.searchParams.delete('si');
+      u.searchParams.delete('context');
+    } else if (host.includes('youtube.com')) {
+      const videoId = u.searchParams.get('v');
+      u.search = '';
+      if (videoId) {
+        u.searchParams.set('v', videoId);
+      }
+    } else if (host.includes('youtu.be')) {
+      u.search = '';
+    }
+    
+    return u.toString();
+  } catch (e) {
+    return val;
+  }
+}
+
 function getQueryHash(query) {
-  const norm = (query || '').trim().toLowerCase();
+  const normalized = normalizeMusicUrl(query);
+  const norm = normalized.trim().toLowerCase();
   return crypto.createHash('sha256').update(norm).digest('hex');
 }
 
 module.exports = {
   isDbActive: () => PROVIDER === 'SUPABASE' || PROVIDER === 'SQLITE' || PROVIDER === 'JSON',
+  normalizeMusicUrl,
   
   getCachedSong: async (query) => {
     const hash = getQueryHash(query);
@@ -254,11 +307,12 @@ module.exports = {
   },
 
   saveCachedSong: async (query, country, songData) => {
-    const hash = getQueryHash(query);
+    const normalized = normalizeMusicUrl(query);
+    const hash = getQueryHash(normalized);
     const shortId = songData.shortId || generateShortId();
     const dbRow = {
       id: shortId,
-      query: query,
+      query: normalized,
       title: songData.title || songData.t || null,
       artist: songData.artist || songData.a || null,
       album: songData.album || null,

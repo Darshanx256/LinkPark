@@ -269,3 +269,74 @@ def test_csp_nonce_generation():
         except subprocess.TimeoutExpired:
             proc.kill()
 
+
+def test_apple_music_country_deduplication():
+    import subprocess
+    import tempfile
+
+    port = unused_port()
+    db_file = tempfile.mktemp(suffix=".sqlite")
+
+    env = os.environ.copy()
+    env.pop("SERVICE", None)
+    env.update({
+        "PORT": str(port),
+        "TINYFISH_SIMULATOR": "1",
+        "DB_PROVIDER": "SQLITE",
+        "DB_FILE_PATH": db_file,
+    })
+
+    proc = subprocess.Popen(
+        ["node", "server.js"],
+        cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        # Wait for server to start
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(base_url, timeout=1) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                time.sleep(0.1)
+        else:
+            pytest.fail("Server did not start in standalone mode")
+
+        # First request: Apple Music US URL
+        url_us = "https://music.apple.com/us/album/shape-of-you/1191715423?i=1191715424"
+        status1, data1 = api_get(base_url, "/api/resolve", {"u": url_us})
+        assert status1 == 200, f"Expected 200, got {status1}. Response: {data1}"
+        id1 = data1.get("shortId")
+        assert id1 is not None
+
+        # Second request: Apple Music GB URL
+        url_gb = "https://music.apple.com/gb/album/shape-of-you/1191715423?i=1191715424"
+        status2, data2 = api_get(base_url, "/api/resolve", {"u": url_gb})
+        assert status2 == 200, f"Expected 200, got {status2}. Response: {data2}"
+        id2 = data2.get("shortId")
+        assert id2 is not None
+
+        # Assert both returned the same shortId!
+        assert id1 == id2, f"Expected same ID for US and GB Apple Music URLs, got {id1} and {id2}"
+
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+        if os.path.exists(db_file):
+            try:
+                os.remove(db_file)
+            except Exception:
+                pass
+
+
