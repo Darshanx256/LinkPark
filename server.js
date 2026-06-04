@@ -214,7 +214,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   const lookupKey = u || query;
   
   // 1. Check local/in-memory cache first
-  const resolveCacheKey = `res:${u || ''}:${query || ''}:${artist || ''}:${country || 'US'}`;
+  const resolveCacheKey = `res:${u || ''}:${query || ''}:${artist || ''}`;
   const cachedResolve = resolver.cacheGet(resolveCacheKey);
   if (cachedResolve) {
     return res.json(JSON.parse(cachedResolve));
@@ -223,7 +223,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
   // 2. Check Database cache next
   if (db.isDbActive()) {
     try {
-      const cached = await db.getCachedSong(lookupKey, country);
+      const cached = await db.getCachedSong(lookupKey);
       if (cached) {
         resolver.cacheSet(resolveCacheKey, JSON.stringify(cached));
         return res.json(cached);
@@ -260,7 +260,7 @@ app.get('/api/resolve', requireApiAccess, async (req, res) => {
         if (typeof link !== 'string') return;
         let norm = link.trim().replace('music.youtube.com', 'youtube.com');
         if (norm.includes('youtube.com/shorts/')) norm = norm.replace('youtube.com/shorts/', 'youtube.com/watch?v=');
-        const linkKey = `res:${norm}:::${country || 'US'}`;
+        const linkKey = `res:${norm}:::`;
         resolver.cacheSet(linkKey, responseString);
       });
     }

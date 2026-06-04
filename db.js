@@ -230,16 +230,16 @@ function generateShortId() {
   return crypto.randomBytes(4).toString('hex'); // 8 character alphanumeric string
 }
 
-function getQueryHash(query, country) {
+function getQueryHash(query) {
   const norm = (query || '').trim().toLowerCase();
-  return crypto.createHash('sha256').update(`${norm}:${country || 'US'}`).digest('hex');
+  return crypto.createHash('sha256').update(norm).digest('hex');
 }
 
 module.exports = {
   isDbActive: () => PROVIDER === 'SUPABASE' || PROVIDER === 'SQLITE' || PROVIDER === 'JSON',
   
-  getCachedSong: async (query, country) => {
-    const hash = getQueryHash(query, country);
+  getCachedSong: async (query) => {
+    const hash = getQueryHash(query);
     const row = await dbAdapter.get(hash);
     if (!row) return null;
     return {
@@ -254,7 +254,7 @@ module.exports = {
   },
 
   saveCachedSong: async (query, country, songData) => {
-    const hash = getQueryHash(query, country);
+    const hash = getQueryHash(query);
     const shortId = songData.shortId || generateShortId();
     const dbRow = {
       id: shortId,
