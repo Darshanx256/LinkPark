@@ -192,3 +192,80 @@ def test_odesli_and_apple_music_stay_reliable_over_random_tracks(linkpark_server
             time.sleep(max(0, pause - elapsed))
 
     assert not failures, "\n".join(failures)
+
+
+def test_csp_nonce_generation():
+    import re
+    import subprocess
+
+    port = unused_port()
+    env = os.environ.copy()
+    env.pop("SERVICE", None)
+    env.update({
+        "PORT": str(port),
+        "TINYFISH_SIMULATOR": "1",
+    })
+
+    proc = subprocess.Popen(
+        ["node", "server.js"],
+        cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        # Wait for server to start
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(base_url, timeout=1) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                time.sleep(0.1)
+        else:
+            pytest.fail("Server did not start in standalone mode")
+
+        # Request 1
+        req1 = urllib.request.Request(base_url)
+        with urllib.request.urlopen(req1, timeout=5) as resp1:
+            headers1 = resp1.info()
+            body1 = resp1.read().decode("utf-8")
+
+        # Request 2
+        req2 = urllib.request.Request(base_url)
+        with urllib.request.urlopen(req2, timeout=5) as resp2:
+            headers2 = resp2.info()
+            body2 = resp2.read().decode("utf-8")
+
+        csp1 = headers1.get("Content-Security-Policy", "")
+        csp2 = headers2.get("Content-Security-Policy", "")
+
+        assert csp1, "Missing Content-Security-Policy header on request 1"
+        assert csp2, "Missing Content-Security-Policy header on request 2"
+
+        nonce_re = re.compile(r"nonce-([A-Za-z0-9+/=]+)")
+        match1 = nonce_re.search(csp1)
+        match2 = nonce_re.search(csp2)
+
+        assert match1, f"No nonce found in CSP header 1: {csp1}"
+        assert match2, f"No nonce found in CSP header 2: {csp2}"
+
+        nonce1 = match1.group(1)
+        nonce2 = match2.group(1)
+
+        assert nonce1 != nonce2, "Nonces should be unique per request"
+
+        # Verify nonce is correctly injected into the script tags in body1
+        script_nonce_pattern = f'nonce="{nonce1}"'
+        assert script_nonce_pattern in body1, f"Nonce {nonce1} not injected into HTML script tags"
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
