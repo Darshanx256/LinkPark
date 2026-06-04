@@ -353,7 +353,7 @@ document.body.addEventListener('click', e => {
 document.getElementById('shareCardBtn')?.addEventListener('click', async (e) => {
   if (!currentData) return;
   const btn = e.currentTarget;
-  const hash = await encodeShare(currentData);
+  const hash = currentData.shortId || await encodeShare(currentData);
 
   // Use the frontend origin for sharing to keep the proxy endpoint private and secure.
   const shareUrl = new URL(window.location.origin);
@@ -375,43 +375,65 @@ window.addEventListener('load', async () => {
   stashSection?.querySelector('.launcher')?.addEventListener('click', openStashModal);
 
   if (s) {
-    const data = await decodeShare(s);
+    let data = await decodeShare(s);
+    if (!data) {
+      try {
+        const r = await fetch(`${PROXY_URL || ''}/api/share?id=${s}`);
+        if (r.ok) {
+          data = await r.json();
+          if (data && data.t) {
+            data.shortId = s;
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to retrieve short link:', e);
+      }
+    }
+
     if (data) {
       setLoad(true);
       const myId = ++lastResolveId;
       try {
-        const fetchResolve = async (retry = true) => {
-          if (!PROXY_URL) return null;
-          const h = await getPoWHeaders();
-          const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(data.t + ' ' + data.a)}&artist=${enc(data.a)}&country=${COUNTRY}`, { headers: h });
-          if (r.status === 401 && retry) {
-             clearChallengeQueue();
-             return fetchResolve(false);
+        const hasLinks = data.l && Object.keys(data.l).length > 0;
+        let art = data.art || '';
+        let preview = data.preview || '';
+        let merged = { ...data.l };
+
+        if (!hasLinks) {
+          const fetchResolve = async (retry = true) => {
+            if (!PROXY_URL) return null;
+            const h = await getPoWHeaders();
+            const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(data.t + ' ' + data.a)}&artist=${enc(data.a)}&country=${COUNTRY}`, { headers: h });
+            if (r.status === 401 && retry) {
+               clearChallengeQueue();
+               return fetchResolve(false);
+            }
+            return r.ok ? r.json() : null;
+          };
+
+          const [res, it] = await Promise.allSettled([
+            fetchResolve(),
+            data.itunesId ? fetch(`https://itunes.apple.com/lookup?id=${data.itunesId}&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
+          ]);
+
+          if (myId !== lastResolveId) return;
+          const resolved = res.status === 'fulfilled' ? res.value : null;
+          const itData = it.status === 'fulfilled' ? it.value : null;
+
+          if (itData?.results?.[0]) {
+             const track = itData.results[0];
+             art = track.artworkUrl100.replace('100x100bb', '600x600bb');
+             preview = track.previewUrl;
+             merged.appleMusic = track.trackViewUrl;
           }
-          return r.ok ? r.json() : null;
-        };
-
-        const [res, it] = await Promise.allSettled([
-          fetchResolve(),
-          data.itunesId ? fetch(`https://itunes.apple.com/lookup?id=${data.itunesId}&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
-        ]);
-
-        if (myId !== lastResolveId) return;
-        const resolved = res.status === 'fulfilled' ? res.value : null;
-        const itData = it.status === 'fulfilled' ? it.value : null;
-
-        let art = '', preview = '', merged = { ...data.l };
-        if (itData?.results?.[0]) {
-           const track = itData.results[0];
-           art = track.artworkUrl100.replace('100x100bb', '600x600bb');
-           preview = track.previewUrl;
-           merged.appleMusic = track.trackViewUrl;
+          if (resolved) {
+             Object.assign(merged, resolved.links);
+             art = art || resolved.art;
+          }
         }
-        if (resolved) {
-           Object.assign(merged, resolved.links);
-           art = art || resolved.art;
-        }
+
         populateUI(data.t, data.a, art, preview, merged);
+        currentData = { t: data.t, a: data.a, art, preview, l: merged, shortId: data.shortId || null };
         cardEl.style.display = 'block';
       } catch (e) {
         populateUI(data.t, data.a, '', '', data.l);
@@ -881,7 +903,7 @@ async function resolve(data, shouldSave = true) {
   const isUrl = typeof data === 'string';
 
   if (item) {
-    currentData = { t, a, art: normalizeArtworkUrl(item.art || item.thumb), preview: item.preview || item.previewUrl, l: item.l || {} };
+    currentData = { t, a, art: normalizeArtworkUrl(item.art || item.thumb), preview: item.preview || item.previewUrl, l: item.l || {}, shortId: item.shortId || null };
     populateUI(t, a, currentData.art, currentData.preview, null);
   } else {
     populateUI('', '', '', null, null);
@@ -959,7 +981,7 @@ async function resolve(data, shouldSave = true) {
 
     const itunesId = res.links.appleMusic?.match(/[?&]i=(\d+)/)?.[1] || null;
     populateUI(finalT, finalA, finalArt, finalPreview, res.links);
-    currentData = { t: finalT, a: finalA, art: finalArt, preview: finalPreview, itunesId, l: res.links };
+    currentData = { t: finalT, a: finalA, art: finalArt, preview: finalPreview, itunesId, l: res.links, shortId: res.shortId || null };
     
     if (shouldSave) _updateRecentSearch(currentData, document.getElementById('q').value);
     syncSavedTrackData(currentData, renderSaved);
