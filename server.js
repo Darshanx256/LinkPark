@@ -4,6 +4,7 @@ const fetch = require('node-fetch');
 const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
+const fs = require('fs');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -23,6 +24,7 @@ const API_RATE_LIMIT_MAX = parsePositiveInt(process.env.API_RATE_LIMIT_MAX, 120)
  */
 const TFKEYS = (process.env.TFKEY || '').split(',').map(k => k.trim()).filter(Boolean);
 const USE_TINYFISH_SIMULATOR = process.env.TINYFISH_SIMULATOR === '1';
+const blacklistedKeys = new Map(); // key -> expiry timestamp (Date.now() + 5 minutes)
 
 /**
  * Parses allowed origins from the SERVICE environment variable.
@@ -142,10 +144,15 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  // Content Security Policy (CSP)
+  
+  // Generate cryptographically secure nonce per request
+  const nonce = crypto.randomBytes(16).toString('base64');
+  res.locals.nonce = nonce;
+
+  // Content Security Policy (CSP) with nonce-based script execution
   const csp = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'", // unsafe-inline for config.js error handler
+    `script-src 'self' 'nonce-${nonce}'`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https:",
@@ -454,10 +461,26 @@ async function resolveSearch(query) {
 
   return dedup.dedupe(cacheKey, async () => {
     const keyOrder = shuffleKeys();
-    const maxAttempts = Math.min(keyOrder.length, 9);
+    
+    // Filter out blacklisted keys
+    const activeIndices = keyOrder.filter(idx => {
+      const key = TFKEYS[idx];
+      const expiry = blacklistedKeys.get(key);
+      if (expiry && Date.now() < expiry) {
+        return false;
+      }
+      if (expiry) {
+        blacklistedKeys.delete(key); // Cleanup expired entry
+      }
+      return true;
+    });
+
+    // Fallback: if all keys are blacklisted, try all of them
+    const finalIndices = activeIndices.length > 0 ? activeIndices : keyOrder;
+    const maxAttempts = Math.min(finalIndices.length, 9);
 
     for (let i = 0; i < maxAttempts; i++) {
-      const currentKey = TFKEYS[keyOrder[i]];
+      const currentKey = TFKEYS[finalIndices[i]];
       try {
         const response = await fetch(
           `https://api.search.tinyfish.ai/?query=${encodeURIComponent(query)}`,
@@ -470,6 +493,9 @@ async function resolveSearch(query) {
             cacheSet(cacheKey, text);
             return data;
           } catch (e) { continue; }
+        } else if (response.status === 429 || response.status === 403 || response.status >= 500) {
+          console.warn(`[blacklist] Key ${currentKey.substring(0, 8)}... failed with status ${response.status}. Blacklisting for 5 minutes.`);
+          blacklistedKeys.set(currentKey, Date.now() + 5 * 60 * 1000);
         }
       } catch (error) { continue; }
     }
@@ -757,9 +783,31 @@ app.get('/api/cache-stats', requireApiAccess, (req, res) => {
 if (ALLOWED_ORIGINS.length > 0) {
   console.log(`Proxy-only mode. Whitelist: ${ALLOWED_ORIGINS.join(', ')}`);
 } else {
+  let indexHtmlTemplate = '';
+  try {
+    indexHtmlTemplate = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  } catch (e) {
+    console.error('Failed to read index.html template:', e);
+  }
+
+  function serveIndexHtml(req, res) {
+    const nonce = res.locals.nonce || crypto.randomBytes(16).toString('base64');
+    const html = indexHtmlTemplate.replace(/%%NONCE%%/g, nonce);
+    res.send(html);
+  }
+
+  app.get('/', serveIndexHtml);
+  app.get('/index.html', serveIndexHtml);
+
   app.use(express.static(__dirname));
   app.get('/config.js', (req, res) => res.type('application/javascript').send('// Standalone mode'));
-  app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+  
+  app.get('*', (req, res) => {
+    if (req.accepts('html')) {
+      return serveIndexHtml(req, res);
+    }
+    res.status(404).end();
+  });
 }
 
 app.listen(PORT, () => {

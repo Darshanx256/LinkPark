@@ -29,7 +29,14 @@
   <link rel="preconnect" href="https://itunes.apple.com">
   <link rel="dns-prefetch" href="https://itunes.apple.com">
   <link rel="stylesheet" href="style.css">
-  <script src="config.js" onerror="console.log('No local config.js found')"></script>
+  <script nonce="%%NONCE%%">
+    window.addEventListener('error', function(e) {
+      if (e.target && e.target.tagName === 'SCRIPT' && e.target.src.indexOf('config.js') !== -1) {
+        console.log('No local config.js found');
+      }
+    }, true);
+  </script>
+  <script src="config.js"></script>
 </head>
 
 <body>
@@ -128,7 +135,7 @@
     </div>
   </div>
 
-  <script type="module" src="js/script.js"></script>
+  <script type="module" src="js/script.js" nonce="%%NONCE%%"></script>
 </body>
 
 </html>
