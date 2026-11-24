@@ -4,7 +4,8 @@
   "description": "Cross-platform music link resolver",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/unit.test.js"
   },
   "dependencies": {
     "cors": "^2.8.6",

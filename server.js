@@ -11,14 +11,24 @@ const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
-const PORT = process.env.PORT || 3000;
-const SESSION_RATE_LIMIT_WINDOW_MS = parseInt(process.env.SESSION_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
-const SESSION_RATE_LIMIT_MAX = parseInt(process.env.SESSION_RATE_LIMIT_MAX) || 20;
-const API_RATE_LIMIT_WINDOW_MS = parseInt(process.env.API_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
-const API_RATE_LIMIT_MAX = parseInt(process.env.API_RATE_LIMIT_MAX) || 120;
+function parseEnvInt(val, defaultVal, min = 1, max = Infinity) {
+  if (val === undefined || val === '') return defaultVal;
+  const num = parseInt(val, 10);
+  if (Number.isNaN(num) || num < min || num > max) {
+    console.warn(`[config] Invalid value "${val}" for setting. Using default: ${defaultVal}`);
+    return defaultVal;
+  }
+  return num;
+}
+
+const PORT = parseEnvInt(process.env.PORT, 3000, 1, 65535);
+const SESSION_RATE_LIMIT_WINDOW_MS = parseEnvInt(process.env.SESSION_RATE_LIMIT_WINDOW_MS, 60 * 1000, 1000);
+const SESSION_RATE_LIMIT_MAX = parseEnvInt(process.env.SESSION_RATE_LIMIT_MAX, 20, 1);
+const API_RATE_LIMIT_WINDOW_MS = parseEnvInt(process.env.API_RATE_LIMIT_WINDOW_MS, 60 * 1000, 1000);
+const API_RATE_LIMIT_MAX = parseEnvInt(process.env.API_RATE_LIMIT_MAX, 120, 1);
 
 const ALLOWED_ORIGINS = (process.env.SERVICE || '').split(',').map(o => o.trim()).filter(Boolean);
-const POW_DIFFICULTY = parseInt(process.env.POW_DIFFICULTY) || 4;
+const POW_DIFFICULTY = parseEnvInt(process.env.POW_DIFFICULTY, 4, 1, 8);
 const activeChallenges = new Map();
 
 // Background cleanup for expired challenges every minute
@@ -75,7 +85,7 @@ app.use(cors(corsOptions));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   
   // Generate cryptographically secure nonce per request
@@ -311,10 +321,17 @@ if (ALLOWED_ORIGINS.length > 0) {
   app.get('/', serveIndexHtml);
   app.get('/index.html', serveIndexHtml);
 
-  app.use(express.static(__dirname));
+  // Serve only the specific public directories — never the project root
+  app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: '7d' }));
+  app.use('/js', express.static(path.join(__dirname, 'js'), { maxAge: '1d' }));
+  app.use('/style.css', (req, res) => res.sendFile(path.join(__dirname, 'style.css')));
   app.get('/config.js', (req, res) => res.type('application/javascript').send('// Standalone mode'));
   
   app.get('*', (req, res) => {
+    // Don't serve index.html for API-like paths
+    if (req.path.startsWith('/api/')) {
+      return res.status(404).json({ error: 'not_found' });
+    }
     if (req.accepts('html')) {
       return serveIndexHtml(req, res);
     }

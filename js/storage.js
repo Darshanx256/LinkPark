@@ -14,7 +14,12 @@ export function getSaved() {
 }
 
 export function updateSavedStorage(saved) {
-  localStorage.setItem(SAVED_KEY, JSON.stringify(saved.slice(0, 50)));
+  try {
+    localStorage.setItem(SAVED_KEY, JSON.stringify(saved.slice(0, 50)));
+  } catch (e) {
+    // localStorage full or unavailable (private browsing, quota exceeded)
+    console.warn('[storage] Failed to save stash:', e.message);
+  }
 }
 
 export function savedKey(data) {
@@ -133,7 +138,11 @@ export function updateRecentSearch(val, queryToRemove = '') {
   });
   
   recent.unshift({ text, data });
-  localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, 5)));
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, 5)));
+  } catch (e) {
+    console.warn('[storage] Failed to save recent searches:', e.message);
+  }
 }
 
 export function clearRecent() {

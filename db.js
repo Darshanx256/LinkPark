@@ -30,7 +30,15 @@ class JsonFileAdapter {
   constructor(filePath) {
     this.filePath = filePath || path.join(__dirname, 'db.json');
     this.data = {};
+    this._saveTimer = null;
+    this._dirty = false;
     this.load();
+
+    // Flush pending writes on shutdown
+    const flush = () => this._flush();
+    process.on('exit', flush);
+    process.on('SIGINT', () => { flush(); process.exit(0); });
+    process.on('SIGTERM', () => { flush(); process.exit(0); });
   }
   load() {
     try {
@@ -41,21 +49,32 @@ class JsonFileAdapter {
       console.error('[db] Failed to load JSON database:', e.message);
     }
   }
-  save() {
+  _flush() {
+    if (!this._dirty) return;
     try {
       const dir = path.dirname(this.filePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), 'utf8');
+      this._dirty = false;
     } catch (e) {
       console.error('[db] Failed to save JSON database:', e.message);
     }
+  }
+  _scheduleSave() {
+    this._dirty = true;
+    if (this._saveTimer) return;
+    // Debounce: coalesce rapid writes into a single disk write after 1s
+    this._saveTimer = setTimeout(() => {
+      this._saveTimer = null;
+      this._flush();
+    }, 1000);
   }
   async get(key) {
     return this.data[key] || null;
   }
   async set(key, value) {
     this.data[key] = value;
-    this.save();
+    this._scheduleSave();
   }
   async getByShortId(id) {
     return Object.values(this.data).find(row => row && row.id === id) || null;
@@ -210,18 +229,31 @@ class SupabaseAdapter {
 }
 
 // Instantiate DB Adapter based on configuration
-if (PROVIDER === 'SUPABASE' && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
-  dbAdapter = new SupabaseAdapter(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-  console.log('Database Provider: SUPABASE (REST API)');
+if (PROVIDER === 'SUPABASE') {
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+    dbAdapter = new SupabaseAdapter(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+    console.log('Database Provider: SUPABASE (REST API)');
+  } else {
+    console.warn('[db] DB_PROVIDER is set to SUPABASE but SUPABASE_URL or SUPABASE_KEY is missing. Falling back to MEMORY.');
+    dbAdapter = new MemoryAdapter();
+  }
 } else if (PROVIDER === 'SQLITE') {
   const filePath = process.env.DB_FILE_PATH || path.join(__dirname, 'db.sqlite');
-  dbAdapter = new SqliteAdapter(filePath);
-  console.log(`Database Provider: SQLITE (${filePath})`);
+  try {
+    dbAdapter = new SqliteAdapter(filePath);
+    console.log(`Database Provider: SQLITE (${filePath})`);
+  } catch (err) {
+    console.warn(`[db] Failed to initialize SQLite (${err.message}). Falling back to MEMORY.`);
+    dbAdapter = new MemoryAdapter();
+  }
 } else if (PROVIDER === 'JSON') {
   const filePath = process.env.DB_FILE_PATH || path.join(__dirname, 'db.json');
   dbAdapter = new JsonFileAdapter(filePath);
   console.log(`Database Provider: LOCAL JSON (${filePath})`);
 } else {
+  if (PROVIDER && PROVIDER !== 'MEMORY') {
+    console.warn(`[db] Unknown DB_PROVIDER "${PROVIDER}". Falling back to MEMORY.`);
+  }
   dbAdapter = new MemoryAdapter();
   console.log('Database Provider: MEMORY (Transient Cache)');
 }
@@ -335,5 +367,6 @@ module.exports = {
       preview: row.preview_url,
       l: row.links
     };
-  }
+  },
+  generateShortId
 };

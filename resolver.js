@@ -28,6 +28,9 @@ function cacheGet(key) {
     cache.delete(key);
     return null;
   }
+  // LRU: Move accessed entry to end so oldest-unused is evicted first
+  cache.delete(key);
+  cache.set(key, entry);
   return entry.value;
 }
 
@@ -447,7 +450,7 @@ async function resolveItunes(query, country = 'US') {
 // Dynamic Resolution workflow wrapper
 async function resolveTrackDetails(query, artist, album, country, u, isUrlDrop) {
   let od = null;
-  let tfSp = null, tfYt = null;
+  let tfSp = null, tfYt = null, tfYtTopic = null;
   let itRes = null;
   let scrapedMeta = null;
 
@@ -477,7 +480,7 @@ async function resolveTrackDetails(query, artist, album, country, u, isUrlDrop) 
     if (bestTitle) {
       const qMeta = `${bestTitle} ${bestArtist || ''}`;
       initialTasks.push(resolveSearch(qMeta + ' spotify track').then(d => tfSp = d));
-      initialTasks.push(resolveSearch(qMeta + ' youtube music topic').then(d => tfYt = d));
+      initialTasks.push(resolveSearch(qMeta + ' youtube music topic').then(d => tfYtTopic = d));
       initialTasks.push(resolveSearch(qMeta + ' youtube music track').then(d => tfYt = d));
       initialTasks.push(resolveItunes(qMeta, country).then(d => itRes = d));
     }
@@ -488,6 +491,9 @@ async function resolveTrackDetails(query, artist, album, country, u, isUrlDrop) 
   }
 
   await Promise.allSettled(initialTasks);
+
+  // Prefer "topic" results over "track" for YouTube Music (more accurate for music content)
+  if (tfYtTopic) tfYt = tfYtTopic;
 
   let ent = od?.entitiesByUniqueId?.[od?.entityUniqueId] || {};
   if (!ent.title && od?.entitiesByUniqueId) {
@@ -571,6 +577,8 @@ module.exports = {
   getCacheStats,
   validateCountry,
   validateString,
+  cleanupTitle,
+  isValidMusicUrl,
   resolveTrackDetails,
   cacheGet,
   cacheSet

@@ -11,6 +11,20 @@ import {
   getRecent, updateRecentSearch, clearRecent
 } from './storage.js';
 
+// Global error handlers to prevent silent failures
+window.addEventListener('unhandledrejection', (event) => {
+  if (event.reason?.name === 'AbortError') return;
+  console.warn('[app] Unhandled promise rejection:', event.reason);
+});
+window.addEventListener('error', (event) => {
+  console.warn('[app] Global error:', event.message);
+});
+
+// Active abort controllers for in-flight requests
+let activeResolveAbortController = null;
+let activeSuggestAbortController = null;
+let activeSearchAbortController = null;
+
 /** 
  * Unique identifier for the current resolution request.
  * Used to discard results from stale network requests when a new search begins.
@@ -218,20 +232,40 @@ function crossfadeTo(src, nextIndex, nextKey) {
   
   secondaryAudio.src = src;
   secondaryAudio.volume = 0;
-  secondaryAudio.play();
+  secondaryAudio.play().catch(() => {});
   updatePlayersUI();
   
   const fadeTime = 3000;
   let startTime = null;
+
+  function completeFade() {
+    const oldAudio = audio;
+    audio = secondaryAudio;
+    secondaryAudio = oldAudio;
+    
+    oldAudio.pause();
+    oldAudio.volume = 1;
+    audio.volume = 1;
+    
+    modalIndex = nextIndex;
+    playingKey = fadingKey;
+    isFading = false;
+    fadingKey = null;
+    updatePlayersUI();
+  }
   
   function fader(timestamp) {
     if (!startTime) startTime = timestamp;
     const p = Math.min((timestamp - startTime) / fadeTime, 1);
     
-    audio.volume = 1 - p;
-    secondaryAudio.volume = p;
+    audio.volume = Math.max(0, 1 - p);
+    secondaryAudio.volume = Math.min(1, p);
     
     if (p < 1 && !secondaryAudio.paused) {
+      if (document.hidden) {
+        completeFade();
+        return;
+      }
       requestAnimationFrame(fader);
     } else if (secondaryAudio.paused) {
       audio.pause();
@@ -240,18 +274,7 @@ function crossfadeTo(src, nextIndex, nextKey) {
       fadingKey = null;
       updatePlayersUI();
     } else {
-      const oldAudio = audio;
-      audio = secondaryAudio;
-      secondaryAudio = oldAudio;
-      
-      oldAudio.pause();
-      oldAudio.volume = 1;
-      
-      modalIndex = nextIndex;
-      playingKey = fadingKey;
-      isFading = false;
-      fadingKey = null;
-      updatePlayersUI();
+      completeFade();
     }
   }
   requestAnimationFrame(fader);
@@ -484,12 +507,18 @@ qEl.addEventListener('input', () => {
 
 async function suggest(q) {
   if (isSearching) return;
+  if (activeSuggestAbortController) activeSuggestAbortController.abort();
+  activeSuggestAbortController = new AbortController();
+  const signal = activeSuggestAbortController.signal;
+
   try {
-    const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=6&country=${COUNTRY}&v=${Date.now()}`);
+    const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=6&country=${COUNTRY}&v=${Date.now()}`, { signal });
     const d = await r.json();
     if (isSearching) return;
     renderDD(d.results || []);
-  } catch (_) { }
+  } catch (e) {
+    if (e.name !== 'AbortError') console.warn('Suggest fetch failed:', e);
+  }
 }
 
 function renderDD(tracks) {
@@ -699,11 +728,15 @@ function setupMarquee(el) {
 }
 
 async function search(q) {
+  if (activeSearchAbortController) activeSearchAbortController.abort();
+  activeSearchAbortController = new AbortController();
+  const signal = activeSearchAbortController.signal;
+
   try {
     stashSectionEl.style.display = 'none';
     if (recentSectionEl) recentSectionEl.style.display = 'none';
     renderResultsGrid([], true); 
-    const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=10&country=${COUNTRY}`);
+    const r = await fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=10&country=${COUNTRY}`, { signal });
     const d = await r.json();
     if (!d.results?.length) { 
       resultsGridEl.style.display = 'none';
@@ -713,7 +746,7 @@ async function search(q) {
     renderResultsGrid(d.results);
     _updateRecentSearch(q);
   } catch (e) {
-    showErr('Failed to fetch search results.');
+    if (e.name !== 'AbortError') showErr('Failed to fetch search results.');
   } finally {
     setLoad(false);
   }
@@ -902,6 +935,10 @@ async function resolve(data, shouldSave = true) {
   let item = typeof data === 'object' ? data : null;
   const isUrl = typeof data === 'string';
 
+  if (activeResolveAbortController) activeResolveAbortController.abort();
+  activeResolveAbortController = new AbortController();
+  const signal = activeResolveAbortController.signal;
+
   if (item) {
     currentData = { t, a, art: normalizeArtworkUrl(item.art || item.thumb), preview: item.preview || item.previewUrl, l: item.l || {}, shortId: item.shortId || null };
     populateUI(t, a, currentData.art, currentData.preview, null);
@@ -918,7 +955,7 @@ async function resolve(data, shouldSave = true) {
     const fetchResolve = async (retry = true) => {
       if (!PROXY_URL) return null;
       const h = await getPoWHeaders();
-      const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(q)}&u=${enc(u)}&artist=${enc(a)}&album=${enc(item?.album || '')}&country=${COUNTRY}`, { headers: h });
+      const r = await fetch(`${PROXY_URL}/api/resolve?query=${enc(q)}&u=${enc(u)}&artist=${enc(a)}&album=${enc(item?.album || '')}&country=${COUNTRY}`, { headers: h, signal });
       if (r.status === 401 && retry) {
         clearChallengeQueue();
         return fetchResolve(false);
@@ -932,7 +969,7 @@ async function resolve(data, shouldSave = true) {
     if (!res) {
       const [resolved, itunesData] = await Promise.allSettled([
         fetchResolve(),
-        (item && !(item.preview || item.previewUrl)) ? fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`).then(r => r.json()) : Promise.resolve(null)
+        (item && !(item.preview || item.previewUrl)) ? fetch(`https://itunes.apple.com/search?term=${enc(q)}&entity=song&limit=1&country=${COUNTRY}`, { signal }).then(r => r.json()) : Promise.resolve(null)
       ]);
 
       if (myId !== lastResolveId) return;
@@ -987,6 +1024,7 @@ async function resolve(data, shouldSave = true) {
     syncSavedTrackData(currentData, renderSaved);
 
   } catch (e) {
+    if (e.name === 'AbortError') return;
     console.error('Resolve failed:', e);
     if (myId === lastResolveId) showErr('Network error. Check your connection.');
   } finally {
